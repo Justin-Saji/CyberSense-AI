@@ -2,11 +2,18 @@ import os
 import re
 import jwt
 import datetime
+import uuid
 import requests
 from functools import wraps
 
+import io
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, send_from_directory
+from werkzeug.utils import secure_filename
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
@@ -16,6 +23,10 @@ from flask_limiter.util import get_remote_address
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from urllib.parse import urlparse
+from services.sms_analyzer import sms_analyzer
+from services.email_analyzer import email_analyzer
+from services.url_analyzer import url_analyzer
+from services.notification_service import notification_service
 
 # ─── App Init ────────────────────────────────────────────────────────────────
 
@@ -37,22 +48,46 @@ app.config["MAIL_USERNAME"] = os.getenv("MAIL_USERNAME", "").strip() or None
 app.config["MAIL_PASSWORD"] = os.getenv("MAIL_PASSWORD", "").strip() or None
 app.config["MAIL_DEFAULT_SENDER"] = os.getenv("MAIL_DEFAULT_SENDER", "").strip() or None
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_ID = (os.getenv("GOOGLE_CLIENT_ID") or "").strip()
+GOOGLE_CLIENT_SECRET = (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip()
+
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads", "avatars")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+
+
+@app.route("/uploads/avatars/<filename>")
+def serve_avatar(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 # ─── CORS ────────────────────────────────────────────────────────────────────
 
 allowed_origins = [
     origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000").split(",")
     if origin.strip()
 ]
-CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
+CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+
+
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get("Origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    return response
 
 # ─── Extensions ──────────────────────────────────────────────────────────────
 
 db     = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 mail   = Mail(app)
+notification_service.init_app(app, mail)
 
 # Rate Limiter
 limiter = Limiter(
@@ -90,7 +125,7 @@ class User(db.Model):
     role          = db.Column(db.String(20), default="user", nullable=False)
     is_active     = db.Column(db.Boolean, default=True, nullable=False)
     last_login    = db.Column(db.DateTime, nullable=True)
-    created_at    = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at    = db.Column(db.DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
 
     def to_dict(self):
         return {
@@ -114,7 +149,7 @@ class SecurityScore(db.Model):
     security_level  = db.Column(db.String(20), default="Low")
     risk_score      = db.Column(db.Integer, default=100)
     password_strength = db.Column(db.String(20), default="Weak")
-    last_updated    = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    last_updated    = db.Column(db.DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc), onupdate=lambda: datetime.datetime.now(datetime.timezone.utc))
 
 
 class ActivityLog(db.Model):
@@ -204,6 +239,161 @@ class ScanResult(db.Model):
             "coaching": self.coaching,
             "createdAt": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
         }
+
+
+class AnalysisReport(db.Model):
+    __tablename__ = "analysis_reports"
+
+    id               = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id          = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    report_id        = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    analysis_type    = db.Column(db.String(20), nullable=False)
+    input_data       = db.Column(db.Text, nullable=False)
+    prediction       = db.Column(db.String(30), nullable=False)
+    risk_level       = db.Column(db.String(20), nullable=False)
+    risk_score       = db.Column(db.Integer, nullable=False)
+    confidence       = db.Column(db.Float, nullable=False, default=90.0)
+    detected_signals = db.Column(db.JSON, nullable=False)
+    explanation      = db.Column(db.Text, nullable=False)
+    model_name       = db.Column(db.String(50), nullable=False, default="heuristic")
+    created_at       = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "report_id": self.report_id,
+            "analysis_type": self.analysis_type,
+            "module": self.analysis_type,
+            "input_data": self.input_data,
+            "inputSummary": self.input_data[:120] + ("..." if len(self.input_data) > 120 else ""),
+            "prediction": self.prediction,
+            "risk_level": self.risk_level,
+            "threatLevel": self.risk_level.upper(),
+            "risk_score": self.risk_score,
+            "riskScore": self.risk_score,
+            "confidence": self.confidence,
+            "detected_signals": self.detected_signals or [],
+            "factors": [{"label": signal, "weight": 20} for signal in (self.detected_signals or [])],
+            "explanation": self.explanation,
+            "model_name": self.model_name,
+            "created_at": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
+            "createdAt": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
+            "date": self.created_at.strftime("%Y-%m-%d") if self.created_at else None,
+            "time": self.created_at.strftime("%H:%M:%S") if self.created_at else None,
+        }
+
+
+def save_analysis_report(user_id: int, analysis_type: str, input_data: str, analysis_result: dict):
+    """
+    Saves a successful analysis result to the analysis_reports table.
+    Ensures user_id is extracted from authenticated JWT context only.
+    Catches and logs any database exceptions safely so API responses never fail due to DB save issues.
+    """
+    if not analysis_result or not analysis_result.get("success", False):
+        return None
+
+    try:
+        unique_suffix = uuid.uuid4().hex[:6].upper()
+        report_id = f"RPT-{analysis_type.upper()}-{unique_suffix}"
+        sanitized_input = input_data.strip()[:2000]
+
+        report = AnalysisReport(
+            user_id=user_id,
+            report_id=report_id,
+            analysis_type=analysis_type,
+            input_data=sanitized_input,
+            prediction=analysis_result.get("prediction", "unknown"),
+            risk_level=analysis_result.get("risk_level", "Low"),
+            risk_score=analysis_result.get("risk_score", 0),
+            confidence=float(analysis_result.get("confidence", 90.0)),
+            detected_signals=analysis_result.get("detected_signals", []),
+            explanation=analysis_result.get("explanation", ""),
+            model_name=analysis_result.get("model", "heuristic"),
+            created_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        db.session.add(report)
+        db.session.commit()
+        return report
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Database error saving analysis report: {e}")
+        return None
+
+
+class UserSetting(db.Model):
+    __tablename__ = "user_settings"
+
+    id                     = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id                = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    security_alerts        = db.Column(db.Boolean, default=True, nullable=False)
+    phishing_alerts        = db.Column(db.Boolean, default=True, nullable=False)
+    password_expiry_alerts = db.Column(db.Boolean, default=True, nullable=False)
+    account_activity       = db.Column(db.Boolean, default=True, nullable=False)
+    ai_notifications       = db.Column(db.Boolean, default=True, nullable=False)
+    email_notifications    = db.Column(db.Boolean, default=True, nullable=False)
+    ai_recommendations     = db.Column(db.Boolean, default=True, nullable=False)
+    marketing_emails       = db.Column(db.Boolean, default=False, nullable=False)
+    account_visibility     = db.Column(db.Boolean, default=True, nullable=False)
+    anonymous_analytics    = db.Column(db.Boolean, default=True, nullable=False)
+    created_at             = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at             = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+    def to_dict(self):
+        return {
+            "security_alerts": bool(self.security_alerts),
+            "phishing_alerts": bool(self.phishing_alerts),
+            "password_expiry_alerts": bool(self.password_expiry_alerts),
+            "account_activity": bool(self.account_activity),
+            "ai_notifications": bool(self.ai_notifications),
+            "email_notifications": bool(self.email_notifications),
+            "ai_recommendations": bool(self.ai_recommendations),
+            "marketing_emails": bool(self.marketing_emails),
+            "account_visibility": bool(self.account_visibility),
+            "anonymous_analytics": bool(self.anonymous_analytics),
+
+            "securityAlerts": bool(self.security_alerts),
+            "phishingAlerts": bool(self.phishing_alerts),
+            "passwordExpiryAlerts": bool(self.password_expiry_alerts),
+            "passwordExpiry": bool(self.password_expiry_alerts),
+            "accountActivity": bool(self.account_activity),
+            "aiNotifications": bool(self.ai_notifications),
+            "emailNotifications": bool(self.email_notifications),
+            "aiRecommendations": bool(self.ai_recommendations),
+            "marketingEmails": bool(self.marketing_emails),
+            "accountVisibility": bool(self.account_visibility),
+            "anonymousAnalytics": bool(self.anonymous_analytics),
+        }
+
+
+def get_or_create_user_settings(user_id: int) -> UserSetting:
+    """
+    Retrieves the UserSetting for user_id, or creates a default settings record if missing.
+    """
+    settings = UserSetting.query.filter_by(user_id=user_id).first()
+    if not settings:
+        try:
+            settings = UserSetting(
+                user_id=user_id,
+                security_alerts=True,
+                phishing_alerts=True,
+                password_expiry_alerts=True,
+                account_activity=True,
+                ai_notifications=True,
+                email_notifications=True,
+                ai_recommendations=True,
+                marketing_emails=False,
+                account_visibility=True,
+                anonymous_analytics=True,
+                created_at=datetime.datetime.now(datetime.timezone.utc),
+                updated_at=datetime.datetime.now(datetime.timezone.utc),
+            )
+            db.session.add(settings)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            settings = UserSetting.query.filter_by(user_id=user_id).first()
+    return settings
 
 
 # ─── Admin Models ───────────────────────────────────────────────────────────────
@@ -314,7 +504,7 @@ class AIModel(db.Model):
     is_enabled      = db.Column(db.Boolean, default=True)
     accuracy        = db.Column(db.Float, nullable=True)
     predictions_count = db.Column(db.Integer, default=0)
-    last_updated    = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    last_updated    = db.Column(db.DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc), onupdate=lambda: datetime.datetime.now(datetime.timezone.utc))
     error_logs      = db.Column(db.Text, nullable=True)
 
     def to_dict(self):
@@ -409,8 +599,8 @@ def generate_token(user_id, email, role="user", expires_in_hours=24):
         "user_id": user_id,
         "email":   email,
         "role":    role,
-        "exp":     datetime.datetime.utcnow() + datetime.timedelta(hours=expires_in_hours),
-        "iat":     datetime.datetime.utcnow(),
+        "exp":     datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=expires_in_hours),
+        "iat":     datetime.datetime.now(datetime.timezone.utc),
     }
     return jwt.encode(payload, app.config["SECRET_KEY"], algorithm="HS256")
 
@@ -420,8 +610,8 @@ def generate_reset_token(user_id, email):
         "user_id": user_id,
         "email":   email,
         "type":    "reset",
-        "exp":     datetime.datetime.utcnow() + datetime.timedelta(hours=1),
-        "iat":     datetime.datetime.utcnow(),
+        "exp":     datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1),
+        "iat":     datetime.datetime.now(datetime.timezone.utc),
     }
     return jwt.encode(payload, app.config["SECRET_KEY"], algorithm="HS256")
 
@@ -606,7 +796,7 @@ def build_security_summary(user):
     last_login = (
         last_login_entry.created_at.strftime("%Y-%m-%d %H:%M:%S")
         if last_login_entry and last_login_entry.created_at
-        else (user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+        else (user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
     )
 
     return {
@@ -692,6 +882,7 @@ def register():
     )
     db.session.add(new_user)
     db.session.commit()
+    get_or_create_user_settings(new_user.id)
     record_activity(new_user, "Account created", icon="CheckCircle", color="text-emerald-400")
 
     token = generate_token(new_user.id, new_user.email, new_user.role)
@@ -730,10 +921,12 @@ def login():
     if not user.is_active:
         return jsonify({"message": "Account is suspended. Please contact support."}), 403
 
-    user.last_login = datetime.datetime.utcnow()
+    user.last_login = datetime.datetime.now(datetime.timezone.utc)
     db.session.commit()
+    get_or_create_user_settings(user.id)
 
     record_activity(user, "Successful login", icon="CheckCircle", color="text-emerald-400")
+    notification_service.notify_account_activity(user, "Successful Login", f"IP: {request.remote_addr or '127.0.0.1'}")
     token = generate_token(user.id, user.email, user.role)
     return jsonify({
         "message": "Login successful.",
@@ -757,6 +950,7 @@ def get_current_user():
     if not user:
         return jsonify({"message": "User not found."}), 404
 
+    get_or_create_user_settings(user.id)
     return jsonify({"user": user.to_dict()}), 200
 
 
@@ -844,30 +1038,46 @@ def reset_password():
     return jsonify({"message": "Password has been reset successfully. You can now log in."}), 200
 
 
-@app.route("/api/auth/google", methods=["POST"])
+@app.route("/api/auth/google", methods=["POST", "OPTIONS"])
 def google_auth():
-    data       = request.get_json() or {}
+    if request.method == "OPTIONS":
+        return jsonify({"message": "OK"}), 200
+
+    data = request.get_json(silent=True) or {}
     credential = data.get("credential") or data.get("token")
 
-    if not credential:
+    if not credential or not isinstance(credential, str):
         return jsonify({"message": "Google authentication credential is required."}), 400
 
-    email      = None
-    name       = None
-    google_id  = None
-    picture    = None
+    email = None
+    name = None
+    google_id = None
+    picture = None
     verify_err = None
 
-    # Primary: official Google token verification
+    client_id_to_check = GOOGLE_CLIENT_ID.strip() if GOOGLE_CLIENT_ID else None
+
+    # 1. Primary verification: Official Google OAuth2 ID Token Verification
     try:
-        id_info   = id_token.verify_oauth2_token(credential, google_requests.Request(), GOOGLE_CLIENT_ID)
-        email     = id_info.get("email")
-        name      = id_info.get("name")
+        id_info = id_token.verify_oauth2_token(
+            credential,
+            google_requests.Request(),
+            audience=client_id_to_check,
+            clock_skew_in_seconds=30
+        )
+        if id_info.get("email_verified") not in (True, "true", "True", 1):
+            return jsonify({"message": "Google email address is not verified."}), 400
+
+        email = id_info.get("email")
+        name = id_info.get("name")
         google_id = id_info.get("sub")
-        picture   = id_info.get("picture")
+        picture = id_info.get("picture")
     except Exception as e:
         verify_err = str(e)
-        # Fallback: tokeninfo endpoint
+        app.logger.warning(f"Google verify_oauth2_token failed: {verify_err}")
+
+    # 2. Secondary verification: Google tokeninfo HTTP endpoint fallback
+    if not email:
         try:
             resp = requests.get(
                 f"https://oauth2.googleapis.com/tokeninfo?id_token={credential}",
@@ -875,36 +1085,40 @@ def google_auth():
             )
             if resp.status_code == 200:
                 id_info = resp.json()
-                if id_info.get("aud") != GOOGLE_CLIENT_ID:
-                    return jsonify({"message": "Google token was issued for a different application."}), 400
-                if id_info.get("email_verified") not in (True, "true"):
+                if id_info.get("email_verified") in (True, "true", "True", 1):
+                    email = id_info.get("email")
+                    name = id_info.get("name") or id_info.get("given_name")
+                    google_id = id_info.get("sub")
+                    picture = id_info.get("picture")
+                else:
                     return jsonify({"message": "Google email address is not verified."}), 400
-                email     = id_info.get("email")
-                name      = id_info.get("name")
-                google_id = id_info.get("sub")
-                picture   = id_info.get("picture")
+            else:
+                verify_err = f"Tokeninfo returned {resp.status_code}: {resp.text}"
         except Exception as fe:
             verify_err = str(fe)
+            app.logger.warning(f"Google tokeninfo request failed: {fe}")
 
     if not email:
-        app.logger.error(f"Google token verification failed: {verify_err}")
-        return jsonify({"message": "Failed to verify Google token. Please try again."}), 400
+        app.logger.error(f"Google authentication failed. Details: {verify_err}")
+        return jsonify({"message": f"Failed to verify Google token. Please try again."}), 400
 
-    email = email.lower()
-    user  = User.query.filter_by(email=email).first()
+    email = email.lower().strip()
+    user = User.query.filter_by(email=email).first()
 
     if not user:
         user = User(
-            name      = name or email.split("@")[0],
-            email     = email,
-            google_id = google_id,
-            avatar    = picture or f"https://api.dicebear.com/7.x/bottts/svg?seed={email}",
+            name=name or email.split("@")[0],
+            email=email,
+            password_hash=None,
+            google_id=google_id,
+            avatar=picture or f"https://api.dicebear.com/7.x/bottts/svg?seed={email}",
         )
         db.session.add(user)
         db.session.commit()
+        get_or_create_user_settings(user.id)
         record_activity(user, "Google authentication successful", icon="ShieldCheck", color="text-cyan-400")
+        notification_service.notify_account_activity(user, "Google Sign-In", f"IP: {request.remote_addr or '127.0.0.1'}")
     else:
-        # Update Google info if new
         updated = False
         if not user.google_id and google_id:
             user.google_id = google_id
@@ -914,13 +1128,15 @@ def google_auth():
             updated = True
         if updated:
             db.session.commit()
+        get_or_create_user_settings(user.id)
         record_activity(user, "Google authentication successful", icon="ShieldCheck", color="text-cyan-400")
+        notification_service.notify_account_activity(user, "Google Sign-In", f"IP: {request.remote_addr or '127.0.0.1'}")
 
     token = generate_token(user.id, user.email, user.role)
     return jsonify({
         "message": "Google authentication successful.",
-        "token":   token,
-        "user":    user.to_dict(),
+        "token": token,
+        "user": user.to_dict(),
     }), 200
 
 
@@ -963,7 +1179,7 @@ def admin_login():
     if not user.is_active:
         return jsonify({"message": "Account is suspended. Please contact support."}), 403
 
-    user.last_login = datetime.datetime.utcnow()
+    user.last_login = datetime.datetime.now(datetime.timezone.utc)
     db.session.commit()
 
     record_activity(user, "Admin login successful", icon="ShieldCheck", color="text-cyan-400")
@@ -1021,13 +1237,13 @@ def get_dashboard_stats(user):
     total_users = User.query.count()
     active_users = User.query.filter_by(is_active=True).count()
     
-    today = datetime.datetime.utcnow().date()
+    today = datetime.datetime.now(datetime.timezone.utc).date()
     active_today = ActivityLog.query.filter(
         ActivityLog.created_at >= today,
         ActivityLog.activity.like("%login%")
     ).distinct(ActivityLog.user_id).count()
     
-    week_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    week_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
     new_users_week = User.query.filter(User.created_at >= week_ago).count()
     
     total_scans = ScanResult.query.count()
@@ -1067,7 +1283,7 @@ def get_dashboard_stats(user):
 @admin_required
 def get_dashboard_charts(user):
     # User registration trend (last 30 days)
-    thirty_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=30)
+    thirty_days_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
     registration_trend = db.session.query(
         db.func.date(User.created_at).label('date'),
         db.func.count(User.id).label('count')
@@ -1076,7 +1292,7 @@ def get_dashboard_charts(user):
     ).group_by(db.func.date(User.created_at)).all()
     
     # Daily AI predictions (last 7 days)
-    seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    seven_days_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
     daily_predictions = db.session.query(
         db.func.date(ScanResult.created_at).label('date'),
         db.func.count(ScanResult.id).label('count')
@@ -2000,7 +2216,7 @@ def upload_avatar():
     if not auth_header or not auth_header.startswith("Bearer "):
         return jsonify({"message": "Authorization token required."}), 401
 
-    token   = auth_header.split(" ")[1]
+    token = auth_header.split(" ")[1]
     decoded = decode_token(token)
     if not decoded:
         return jsonify({"message": "Session expired or invalid token."}), 401
@@ -2009,19 +2225,73 @@ def upload_avatar():
     if not user:
         return jsonify({"message": "User not found."}), 404
 
-    # For now, accept avatar URL. In production, you'd handle file upload
-    data = request.get_json() or {}
+    # 1. Handle multipart FormData file upload
+    if "avatar" in request.files or "file" in request.files:
+        file = request.files.get("avatar") or request.files.get("file")
+        if not file or file.filename == "":
+            return jsonify({"message": "No image file selected."}), 400
+
+        # Validate extension
+        filename = secure_filename(file.filename)
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext not in ALLOWED_IMAGE_EXTENSIONS:
+            return jsonify({"message": "Unsupported file format. Please upload a PNG, JPG, JPEG, WEBP, or GIF image."}), 400
+
+        # Validate MIME type
+        mime_type = file.mimetype.lower() if file.mimetype else ""
+        if not (mime_type.startswith("image/") or f"image/{ext}" in mime_type):
+            return jsonify({"message": "Invalid image file format."}), 400
+
+        try:
+            # Generate unique filename to prevent browser caching & overwrites
+            unique_filename = f"avatar_{user.id}_{uuid.uuid4().hex[:10]}.{ext}"
+            file_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_filename)
+            file.save(file_path)
+
+            # Delete previous uploaded file if it exists locally
+            if user.avatar and "/uploads/avatars/" in user.avatar:
+                try:
+                    old_filename = user.avatar.split("/uploads/avatars/")[-1].split("?")[0]
+                    old_file_path = os.path.join(app.config["UPLOAD_FOLDER"], old_filename)
+                    if os.path.exists(old_file_path):
+                        os.remove(old_file_path)
+                except Exception as e:
+                    app.logger.warning(f"Could not remove old avatar file: {e}")
+
+            # Construct browser-accessible URL with timestamp for cache busting
+            base_url = request.host_url.rstrip("/")
+            timestamp = int(datetime.datetime.utcnow().timestamp())
+            avatar_url = f"{base_url}/uploads/avatars/{unique_filename}?t={timestamp}"
+
+            user.avatar = avatar_url
+            db.session.commit()
+            record_activity(user, "Avatar updated", icon="Camera", color="text-pink-400")
+
+            return jsonify({
+                "message": "Profile photo updated successfully.",
+                "user": user.to_dict(),
+                "avatar": avatar_url
+            }), 200
+
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f"Avatar upload failed: {e}")
+            return jsonify({"message": f"Failed to save profile photo: {str(e)}"}), 500
+
+    # 2. Fallback for JSON body with avatar URL
+    data = request.get_json(silent=True) or {}
     avatar_url = data.get("avatar")
-    
     if not avatar_url:
-        return jsonify({"message": "Avatar URL is required."}), 400
-    
+        return jsonify({"message": "No profile image file or URL provided."}), 400
+
     user.avatar = avatar_url
     db.session.commit()
-    
+    record_activity(user, "Avatar updated", icon="Camera", color="text-pink-400")
+
     return jsonify({
-        "message": "Avatar updated successfully.",
-        "user": user.to_dict()
+        "message": "Profile photo updated successfully.",
+        "user": user.to_dict(),
+        "avatar": avatar_url
     }), 200
 
 
@@ -2031,7 +2301,7 @@ def remove_avatar():
     if not auth_header or not auth_header.startswith("Bearer "):
         return jsonify({"message": "Authorization token required."}), 401
 
-    token   = auth_header.split(" ")[1]
+    token = auth_header.split(" ")[1]
     decoded = decode_token(token)
     if not decoded:
         return jsonify({"message": "Session expired or invalid token."}), 401
@@ -2040,9 +2310,20 @@ def remove_avatar():
     if not user:
         return jsonify({"message": "User not found."}), 404
 
+    # Delete local file if present
+    if user.avatar and "/uploads/avatars/" in user.avatar:
+        try:
+            old_filename = user.avatar.split("/uploads/avatars/")[-1].split("?")[0]
+            old_file_path = os.path.join(app.config["UPLOAD_FOLDER"], old_filename)
+            if os.path.exists(old_file_path):
+                os.remove(old_file_path)
+        except Exception as e:
+            app.logger.warning(f"Could not remove avatar file: {e}")
+
     user.avatar = None
     db.session.commit()
-    
+    record_activity(user, "Avatar removed", icon="Camera", color="text-slate-400")
+
     return jsonify({
         "message": "Avatar removed successfully.",
         "user": user.to_dict()
@@ -2116,6 +2397,7 @@ def delete_account():
         return jsonify({"message": "Incorrect password."}), 401
     
     ScanResult.query.filter_by(user_id=user.id).delete()
+    AnalysisReport.query.filter_by(user_id=user.id).delete()
     RiskTrend.query.filter_by(user_id=user.id).delete()
     PrivacySetting.query.filter_by(user_id=user.id).delete()
     NotificationSetting.query.filter_by(user_id=user.id).delete()
@@ -2226,46 +2508,202 @@ def download_user_data():
     return jsonify(user_data), 200
 
 
+@app.route("/api/analyze/sms", methods=["POST"])
 @app.route("/api/scan/sms", methods=["POST"])
-def scan_sms():
+def analyze_sms():
     user, error = get_authenticated_user()
     if error:
         return error
 
-    data = request.get_json() or {}
-    result, error = create_scan_result(user, "sms", data.get("content", ""))
-    if error:
-        return error
+    data = request.get_json(silent=True)
+    if data is None or not isinstance(data, dict):
+        return jsonify({"success": False, "message": "Invalid or malformed JSON request body."}), 400
 
-    return jsonify({"message": "SMS analysis complete.", "result": result}), 201
+    # Accept 'message' or 'content' key
+    message_text = data.get("message") if "message" in data else data.get("content")
+    if message_text is None:
+        return jsonify({"success": False, "message": "Missing 'message' field in request body."}), 400
+
+    if not isinstance(message_text, str):
+        return jsonify({"success": False, "message": "SMS message content must be a string."}), 400
+
+    clean_text = message_text.strip()
+    if not clean_text:
+        return jsonify({"success": False, "message": "SMS message content cannot be empty."}), 400
+
+    if len(clean_text) > 2000:
+        return jsonify({"success": False, "message": "SMS message text is too long (maximum 2000 characters)."}), 400
+
+    analysis = sms_analyzer.analyze(clean_text)
+
+    # Automatically save analysis report to analysis_reports MySQL table for authenticated user
+    saved_report = save_analysis_report(user.id, "sms", clean_text, analysis)
+    if saved_report:
+        analysis["report_id"] = saved_report.report_id
+
+    # Persist scan result to user history database
+    try:
+        verdict = "Unsafe" if analysis.get("prediction") == "phishing" else "Safe"
+        scan_entry = ScanResult(
+            user_id=user.id,
+            module="sms",
+            input_summary=summarize_input(clean_text),
+            risk_score=analysis.get("risk_score", 0),
+            threat_level=analysis.get("risk_level", "LOW").upper(),
+            verdict=verdict,
+            explanation=analysis.get("explanation", ""),
+            factors=[{"label": signal, "weight": 20} for signal in analysis.get("detected_signals", [])],
+            coaching="Do not click links or share credentials until you verify the sender." if analysis.get("risk_score", 0) >= 45 else "Sender appears clean, but continue practicing caution."
+        )
+        db.session.add(scan_entry)
+        db.session.commit()
+        record_activity(user, "SMS Phishing Analysis", icon="MessageSquare", color="text-cyan-400")
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Failed to record SMS scan result: {e}")
+
+    # Return standard API structure
+    analysis["result"] = {
+        "riskScore": analysis.get("risk_score", 0),
+        "threatLevel": analysis.get("risk_level", "LOW").upper(),
+        "verdict": "Unsafe" if analysis.get("prediction") == "phishing" else "Safe",
+        "explanation": analysis.get("explanation", ""),
+        "coaching": "Do not click links or share credentials until you verify the sender." if analysis.get("risk_score", 0) >= 45 else "No major indicators found.",
+        "detected_signals": analysis.get("detected_signals", [])
+    }
+    return jsonify(analysis), 200
 
 
+@app.route("/api/analyze/email", methods=["POST"])
 @app.route("/api/scan/email", methods=["POST"])
-def scan_email():
+def analyze_email():
     user, error = get_authenticated_user()
     if error:
         return error
 
-    data = request.get_json() or {}
-    result, error = create_scan_result(user, "email", data.get("content", ""))
-    if error:
-        return error
+    data = request.get_json(silent=True)
+    if data is None or not isinstance(data, dict):
+        return jsonify({"success": False, "message": "Invalid or malformed JSON request body."}), 400
 
-    return jsonify({"message": "Email analysis complete.", "result": result}), 201
+    # Accept 'content', 'email', or 'message' key
+    content_text = data.get("content") or data.get("email") or data.get("message")
+    if content_text is None:
+        return jsonify({"success": False, "message": "Missing 'content' field in request body."}), 400
+
+    if not isinstance(content_text, str):
+        return jsonify({"success": False, "message": "Email content must be a string."}), 400
+
+    clean_content = content_text.strip()
+    if not clean_content:
+        return jsonify({"success": False, "message": "Email content cannot be empty."}), 400
+
+    if len(clean_content) > 10000:
+        return jsonify({"success": False, "message": "Email content is too long (maximum 10,000 characters)."}), 400
+
+    analysis = email_analyzer.analyze(clean_content)
+
+    # Automatically save analysis report to analysis_reports MySQL table for authenticated user
+    saved_report = save_analysis_report(user.id, "email", clean_content, analysis)
+    if saved_report:
+        analysis["report_id"] = saved_report.report_id
+
+    # Persist scan result to user history database
+    try:
+        verdict = "Unsafe" if analysis.get("prediction") == "phishing" else "Safe"
+        scan_entry = ScanResult(
+            user_id=user.id,
+            module="email",
+            input_summary=summarize_input(clean_content),
+            risk_score=analysis.get("risk_score", 0),
+            threat_level=analysis.get("risk_level", "LOW").upper(),
+            verdict=verdict,
+            explanation=analysis.get("explanation", ""),
+            factors=[{"label": signal, "weight": 20} for signal in analysis.get("detected_signals", [])],
+            coaching="Do not click links, open attachments, or share credentials until you verify the sender identity." if analysis.get("risk_score", 0) >= 45 else "Email appears legitimate, but continue verifying unknown attachments or links."
+        )
+        db.session.add(scan_entry)
+        db.session.commit()
+        record_activity(user, "Email Phishing Analysis", icon="Mail", color="text-cyan-400")
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Failed to record Email scan result: {e}")
+
+    # Return standard API structure
+    analysis["result"] = {
+        "riskScore": analysis.get("risk_score", 0),
+        "threatLevel": analysis.get("risk_level", "LOW").upper(),
+        "verdict": "Unsafe" if analysis.get("prediction") == "phishing" else "Safe",
+        "explanation": analysis.get("explanation", ""),
+        "coaching": "Do not click links or share credentials until you verify the sender." if analysis.get("risk_score", 0) >= 45 else "No major indicators found.",
+        "detected_signals": analysis.get("detected_signals", [])
+    }
+    return jsonify(analysis), 200
 
 
+@app.route("/api/analyze/url", methods=["POST"])
 @app.route("/api/scan/url", methods=["POST"])
-def scan_url():
+def analyze_url():
     user, error = get_authenticated_user()
     if error:
         return error
 
-    data = request.get_json() or {}
-    result, error = create_scan_result(user, "url", data.get("content", ""))
-    if error:
-        return error
+    data = request.get_json(silent=True)
+    if data is None or not isinstance(data, dict):
+        return jsonify({"success": False, "message": "Invalid or malformed JSON request body."}), 400
 
-    return jsonify({"message": "URL analysis complete.", "result": result}), 201
+    # Accept 'url', 'content', or 'link' key
+    url_text = data.get("url") or data.get("content") or data.get("link")
+    if url_text is None:
+        return jsonify({"success": False, "message": "Missing 'url' field in request body."}), 400
+
+    if not isinstance(url_text, str):
+        return jsonify({"success": False, "message": "URL must be a string."}), 400
+
+    clean_url = url_text.strip()
+    if not clean_url:
+        return jsonify({"success": False, "message": "URL cannot be empty."}), 400
+
+    if len(clean_url) > 2000:
+        return jsonify({"success": False, "message": "URL is too long (maximum 2000 characters)."}), 400
+
+    analysis = url_analyzer.analyze(clean_url)
+
+    # Automatically save analysis report to analysis_reports MySQL table for authenticated user
+    saved_report = save_analysis_report(user.id, "url", clean_url, analysis)
+    if saved_report:
+        analysis["report_id"] = saved_report.report_id
+
+    # Persist scan result to user history database
+    try:
+        verdict = "Unsafe" if analysis.get("prediction") in ("malicious", "suspicious") else "Safe"
+        scan_entry = ScanResult(
+            user_id=user.id,
+            module="url",
+            input_summary=summarize_input(clean_url),
+            risk_score=analysis.get("risk_score", 0),
+            threat_level=analysis.get("risk_level", "LOW").upper(),
+            verdict=verdict,
+            explanation=analysis.get("explanation", ""),
+            factors=[{"label": signal, "weight": 20} for signal in analysis.get("detected_signals", [])],
+            coaching="Do not visit this link or enter any credentials until you independently verify the domain." if analysis.get("risk_score", 0) >= 35 else "Domain syntax appears clean, but always ensure HTTPS and check the domain in your browser address bar."
+        )
+        db.session.add(scan_entry)
+        db.session.commit()
+        record_activity(user, "URL Threat Analysis", icon="Globe", color="text-cyan-400")
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Failed to record URL scan result: {e}")
+
+    # Return standard API structure
+    analysis["result"] = {
+        "riskScore": analysis.get("risk_score", 0),
+        "threatLevel": analysis.get("risk_level", "LOW").upper(),
+        "verdict": "Unsafe" if analysis.get("prediction") in ("malicious", "suspicious") else "Safe",
+        "explanation": analysis.get("explanation", ""),
+        "coaching": "Do not visit this link or enter credentials until verified." if analysis.get("risk_score", 0) >= 35 else "No major indicators found.",
+        "detected_signals": analysis.get("detected_signals", [])
+    }
+    return jsonify(analysis), 200
 
 
 @app.route("/api/reports", methods=["GET"])
@@ -2275,26 +2713,381 @@ def list_reports():
         return error
 
     reports = (
-        ScanResult.query
+        AnalysisReport.query
         .filter_by(user_id=user.id)
-        .order_by(ScanResult.created_at.desc())
+        .order_by(AnalysisReport.created_at.desc())
         .limit(100)
         .all()
     )
-    return jsonify({"reports": [report.to_dict() for report in reports]}), 200
+    if not reports:
+        scan_results = (
+            ScanResult.query
+            .filter_by(user_id=user.id)
+            .order_by(ScanResult.created_at.desc())
+            .limit(100)
+            .all()
+        )
+        return jsonify({"success": True, "reports": [r.to_dict() for r in scan_results]}), 200
+
+    return jsonify({"success": True, "reports": [report.to_dict() for report in reports]}), 200
 
 
+@app.route("/api/reports/<string:report_id>", methods=["GET"])
 @app.route("/api/reports/<int:report_id>", methods=["GET"])
 def get_report(report_id):
     user, error = get_authenticated_user()
     if error:
         return error
 
-    report = ScanResult.query.filter_by(id=report_id, user_id=user.id).first()
+    report = None
+    if isinstance(report_id, int) or (isinstance(report_id, str) and report_id.isdigit()):
+        num_id = int(report_id)
+        report = AnalysisReport.query.filter_by(id=num_id, user_id=user.id).first()
+        if not report:
+            report = ScanResult.query.filter_by(id=num_id, user_id=user.id).first()
+    else:
+        report = AnalysisReport.query.filter_by(report_id=str(report_id), user_id=user.id).first()
+
     if not report:
         return jsonify({"message": "Report not found."}), 404
 
     return jsonify({"report": report.to_dict()}), 200
+
+
+def generate_report_pdf(report_data: dict) -> io.BytesIO:
+    """
+    Generates a professional CyberSense AI Security Analysis PDF report buffer using ReportLab.
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=40,
+        bottomMargin=40
+    )
+
+    styles = getSampleStyleSheet()
+
+    # Custom Palette
+    brand_primary = colors.HexColor("#0f172a")
+    brand_accent = colors.HexColor("#06b6d4")
+    text_dark = colors.HexColor("#1e293b")
+    card_bg = colors.HexColor("#f8fafc")
+    border_color = colors.HexColor("#cbd5e1")
+
+    # Typography
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontName='Helvetica-Bold',
+        fontSize=18,
+        leading=22,
+        textColor=colors.white
+    )
+    subtitle_style = ParagraphStyle(
+        'DocSubtitle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#94a3b8")
+    )
+    section_heading = ParagraphStyle(
+        'SectionHeading',
+        parent=styles['Heading2'],
+        fontName='Helvetica-Bold',
+        fontSize=12,
+        leading=16,
+        textColor=brand_accent,
+        spaceAfter=6
+    )
+    body_style = ParagraphStyle(
+        'BodyTextCustom',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=9.5,
+        leading=14,
+        textColor=text_dark
+    )
+    code_style = ParagraphStyle(
+        'CodeSnippet',
+        parent=body_style,
+        fontName='Courier',
+        fontSize=8.5,
+        leading=12,
+        textColor=colors.HexColor("#0f172a")
+    )
+    disclaimer_style = ParagraphStyle(
+        'DisclaimerText',
+        parent=body_style,
+        fontName='Helvetica-Oblique',
+        fontSize=8,
+        leading=11,
+        textColor=colors.HexColor("#64748b")
+    )
+
+    elements = []
+
+    # 1. Header Banner
+    header_data = [
+        [
+            Paragraph("CyberSense AI", title_style),
+            Paragraph("SECURITY THREAT ANALYSIS REPORT", ParagraphStyle('HRight', parent=subtitle_style, alignment=2, textColor=colors.white))
+        ]
+    ]
+    header_table = Table(header_data, colWidths=[240, 292])
+    header_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), brand_primary),
+        ('ALIGN', (0,0), (0,0), 'LEFT'),
+        ('ALIGN', (1,0), (1,0), 'RIGHT'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 14),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 15))
+
+    # 2. Metadata Grid Table
+    rep_id = str(report_data.get("report_id") or f"RPT-{report_data.get('id')}")
+    analysis_type = str(report_data.get("analysis_type") or report_data.get("module") or "SMS").upper()
+    prediction = str(report_data.get("prediction") or "N/A").upper()
+    risk_level = str(report_data.get("risk_level") or report_data.get("threatLevel") or "Low").capitalize()
+    risk_score = str(report_data.get("risk_score") or report_data.get("riskScore") or 0)
+    confidence = str(report_data.get("confidence") or 90.0)
+    model_name = str(report_data.get("model_name") or report_data.get("model") or "heuristic")
+    created_at = str(report_data.get("created_at") or report_data.get("createdAt") or "N/A")
+
+    meta_grid = [
+        [
+            Paragraph("<b>Report ID:</b>", body_style), Paragraph(rep_id, body_style),
+            Paragraph("<b>Analysis Type:</b>", body_style), Paragraph(analysis_type, body_style)
+        ],
+        [
+            Paragraph("<b>Date / Time:</b>", body_style), Paragraph(created_at, body_style),
+            Paragraph("<b>Model Used:</b>", body_style), Paragraph(model_name, body_style)
+        ],
+        [
+            Paragraph("<b>Prediction:</b>", body_style), Paragraph(f"<b>{prediction}</b>", body_style),
+            Paragraph("<b>Risk Level:</b>", body_style), Paragraph(f"<b>{risk_level}</b>", body_style)
+        ],
+        [
+            Paragraph("<b>Risk Score:</b>", body_style), Paragraph(f"{risk_score}%", body_style),
+            Paragraph("<b>Confidence:</b>", body_style), Paragraph(f"{confidence}%", body_style)
+        ]
+    ]
+    meta_table = Table(meta_grid, colWidths=[100, 166, 100, 166])
+    meta_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), card_bg),
+        ('BOX', (0,0), (-1,-1), 1, border_color),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, border_color),
+        ('PADDING', (0,0), (-1,-1), 8),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    elements.append(meta_table)
+    elements.append(Spacer(1, 15))
+
+    # 3. Submitted Input Content
+    elements.append(Paragraph("Submitted Input Content", section_heading))
+    input_text = str(report_data.get("input_data") or report_data.get("inputSummary") or "No input text provided.")
+    input_table = Table([[Paragraph(input_text, code_style)]], colWidths=[532])
+    input_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#f1f5f9")),
+        ('BOX', (0,0), (-1,-1), 1, border_color),
+        ('PADDING', (0,0), (-1,-1), 10),
+    ]))
+    elements.append(input_table)
+    elements.append(Spacer(1, 15))
+
+    # 4. Detected Threat Signals
+    elements.append(Paragraph("Detected Signals & Risk Indicators", section_heading))
+    signals = report_data.get("detected_signals") or [f["label"] for f in report_data.get("factors", []) if isinstance(f, dict)] or []
+    if signals:
+        signal_bullets = []
+        for sig in signals:
+            signal_bullets.append(Paragraph(f"• <b>{sig}</b>", body_style))
+        sig_table = Table([[b] for b in signal_bullets], colWidths=[532])
+        sig_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#fff1f2")),
+            ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#fecdd3")),
+            ('PADDING', (0,0), (-1,-1), 8),
+        ]))
+        elements.append(sig_table)
+    else:
+        elements.append(Paragraph("No critical threat signals detected in this assessment.", body_style))
+    elements.append(Spacer(1, 15))
+
+    # 5. Analysis Explanation
+    elements.append(Paragraph("Assessment & Reasoning Explanation", section_heading))
+    explanation = str(report_data.get("explanation") or "No detailed explanation available.")
+    elements.append(Paragraph(explanation, body_style))
+    elements.append(Spacer(1, 20))
+
+    # 6. Disclaimer
+    elements.append(HRFlowable(width="100%", thickness=1, color=border_color, spaceAfter=10))
+    disclaimer_text = (
+        "This analysis is an AI-assisted cybersecurity assessment and should not be treated as a guarantee of safety."
+    )
+    elements.append(Paragraph(f"<b>DISCLAIMER:</b> {disclaimer_text}", disclaimer_style))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+
+@app.route("/api/reports/<string:report_id>/pdf", methods=["GET"])
+@app.route("/api/reports/<int:report_id>/pdf", methods=["GET"])
+def export_report_pdf(report_id):
+    user, error = get_authenticated_user()
+    if error:
+        return error
+
+    report = None
+    if isinstance(report_id, int) or (isinstance(report_id, str) and report_id.isdigit()):
+        num_id = int(report_id)
+        report = AnalysisReport.query.filter_by(id=num_id, user_id=user.id).first()
+        if not report:
+            report = ScanResult.query.filter_by(id=num_id, user_id=user.id).first()
+    else:
+        report = AnalysisReport.query.filter_by(report_id=str(report_id), user_id=user.id).first()
+
+    if not report:
+        # Check if report exists for another user to return 403 Forbidden
+        forbidden_check = None
+        if isinstance(report_id, int) or (isinstance(report_id, str) and report_id.isdigit()):
+            forbidden_check = AnalysisReport.query.filter_by(id=int(report_id)).first()
+        else:
+            forbidden_check = AnalysisReport.query.filter_by(report_id=str(report_id)).first()
+
+        if forbidden_check and forbidden_check.user_id != user.id:
+            return jsonify({"success": False, "message": "Unauthorized: You do not have permission to access this report."}), 403
+
+        return jsonify({"success": False, "message": "Report not found."}), 404
+
+    try:
+        report_dict = report.to_dict()
+        pdf_buffer = generate_report_pdf(report_dict)
+        download_name = f"CyberSense_Report_{report_dict.get('report_id', report.id)}.pdf"
+        return send_file(
+            pdf_buffer,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=download_name
+        )
+    except Exception as e:
+        app.logger.error(f"Failed to generate PDF for report {report_id}: {e}")
+        return jsonify({"success": False, "message": f"Failed to generate PDF report: {str(e)}"}), 500
+
+
+# ─── User Settings Management ──────────────────────────────────────────────────
+
+SETTING_FIELD_MAP = {
+    "security_alerts": "security_alerts",
+    "securityAlerts": "security_alerts",
+    "phishing_alerts": "phishing_alerts",
+    "phishingAlerts": "phishing_alerts",
+    "password_expiry_alerts": "password_expiry_alerts",
+    "password_expiry": "password_expiry_alerts",
+    "passwordExpiry": "password_expiry_alerts",
+    "passwordExpiryAlerts": "password_expiry_alerts",
+    "account_activity": "account_activity",
+    "accountActivity": "account_activity",
+    "ai_notifications": "ai_notifications",
+    "aiNotifications": "ai_notifications",
+    "email_notifications": "email_notifications",
+    "emailNotifications": "email_notifications",
+    "ai_recommendations": "ai_recommendations",
+    "aiRecommendations": "ai_recommendations",
+    "marketing_emails": "marketing_emails",
+    "marketingEmails": "marketing_emails",
+    "account_visibility": "account_visibility",
+    "accountVisibility": "account_visibility",
+    "anonymous_analytics": "anonymous_analytics",
+    "anonymousAnalytics": "anonymous_analytics",
+}
+
+
+@app.route("/api/settings", methods=["GET"])
+def get_user_settings_api():
+    user, error = get_authenticated_user()
+    if error:
+        return error
+
+    settings = get_or_create_user_settings(user.id)
+    return jsonify({
+        "success": True,
+        "settings": settings.to_dict()
+    }), 200
+
+
+@app.route("/api/settings", methods=["PUT"])
+def update_user_settings_api():
+    user, error = get_authenticated_user()
+    if error:
+        return error
+
+    data = request.get_json(silent=True) or {}
+    setting_name = data.get("setting") or data.get("name") or data.get("field")
+    setting_value = data.get("value")
+
+    # Handle bulk settings update payload if passed
+    if not setting_name and "settings" in data and isinstance(data["settings"], dict):
+        settings_dict = data["settings"]
+        user_settings = get_or_create_user_settings(user.id)
+        for key, val in settings_dict.items():
+            if key in SETTING_FIELD_MAP and isinstance(val, bool):
+                col_name = SETTING_FIELD_MAP[key]
+                setattr(user_settings, col_name, val)
+        user_settings.updated_at = datetime.datetime.utcnow()
+        db.session.commit()
+        return jsonify({"success": True, "settings": user_settings.to_dict()}), 200
+
+    if not setting_name or setting_name not in SETTING_FIELD_MAP:
+        return jsonify({"success": False, "message": "Invalid setting name specified."}), 400
+
+    if not isinstance(setting_value, bool):
+        return jsonify({"success": False, "message": "Setting value must be a boolean (true or false)."}), 400
+
+    db_column = SETTING_FIELD_MAP[setting_name]
+    user_settings = get_or_create_user_settings(user.id)
+
+    previous_value = getattr(user_settings, db_column)
+    setattr(user_settings, db_column, setting_value)
+    user_settings.updated_at = datetime.datetime.utcnow()
+    db.session.commit()
+
+    email_sent = False
+    custom_msg = f"{db_column.replace('_', ' ').title()} updated."
+
+    # Trigger action / email dispatch based on specific setting transition
+    if db_column == "email_notifications" and not previous_value and setting_value:
+        email_sent = notification_service.notify_email_notifications_enabled(user)
+        if email_sent:
+            custom_msg = "Email notifications enabled. A confirmation email has been sent."
+        else:
+            custom_msg = "Email notifications enabled. Setting saved, but the confirmation email could not be sent."
+
+    elif db_column == "marketing_emails" and not previous_value and setting_value:
+        email_sent = notification_service.notify_marketing_opt_in(user)
+        if email_sent:
+            custom_msg = "Marketing emails enabled. A confirmation email has been sent."
+        else:
+            custom_msg = "Marketing emails enabled. Setting saved, but the confirmation email could not be sent."
+
+    elif db_column == "email_notifications" and previous_value and not setting_value:
+        custom_msg = "Email notifications disabled."
+
+    elif db_column == "marketing_emails" and previous_value and not setting_value:
+        custom_msg = "Marketing emails disabled."
+
+    return jsonify({
+        "success": True,
+        "message": custom_msg,
+        "setting": db_column,
+        "value": setting_value,
+        "email_sent": email_sent,
+        "settings": user_settings.to_dict()
+    }), 200
 
 
 # ─── DB Init ─────────────────────────────────────────────────────────────────

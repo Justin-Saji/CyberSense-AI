@@ -10,10 +10,10 @@ import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../hooks/useToast';
 import { checkPasswordStrength } from '../utils/validators';
-import { profileService } from '../services/authService';
+import { profileService, settingsService } from '../services/authService';
 
 export const Profile = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const navigate = useNavigate();
   const { addToast } = useToast();
   const [profileUser, setProfileUser] = useState(user);
@@ -60,12 +60,125 @@ export const Profile = () => {
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [deletePassword, setDeletePassword] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [updatingSettings, setUpdatingSettings] = useState({});
 
   useEffect(() => {
     setProfileUser(user);
     setEditName(user?.name || '');
     setAvatarPreview(user?.avatar || '');
+
+    const fetchUserSettings = async () => {
+      try {
+        const data = await settingsService.getSettings();
+        if (data && data.settings) {
+          const s = data.settings;
+          setNotifications({
+            securityAlerts: s.security_alerts ?? s.securityAlerts ?? true,
+            phishingAlerts: s.phishing_alerts ?? s.phishingAlerts ?? true,
+            passwordExpiry: s.password_expiry_alerts ?? s.passwordExpiry ?? true,
+            accountActivity: s.account_activity ?? s.accountActivity ?? true,
+            aiNotifications: s.ai_notifications ?? s.aiNotifications ?? true,
+          });
+          setPrivacy({
+            emailNotifications: s.email_notifications ?? s.emailNotifications ?? true,
+            securityAlerts: s.security_alerts ?? s.securityAlerts ?? true,
+            aiRecommendations: s.ai_recommendations ?? s.aiRecommendations ?? true,
+            marketingEmails: s.marketing_emails ?? s.marketingEmails ?? false,
+            accountVisibility: s.account_visibility ?? s.accountVisibility ?? true,
+            anonymousAnalytics: s.anonymous_analytics ?? s.anonymousAnalytics ?? true,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load user settings:', err);
+      }
+    };
+
+    if (user) {
+      fetchUserSettings();
+    }
   }, [user]);
+
+  const dbSettingKeyMap = {
+    securityAlerts: 'security_alerts',
+    phishingAlerts: 'phishing_alerts',
+    passwordExpiry: 'password_expiry_alerts',
+    accountActivity: 'account_activity',
+    aiNotifications: 'ai_notifications',
+    emailNotifications: 'email_notifications',
+    aiRecommendations: 'ai_recommendations',
+    marketingEmails: 'marketing_emails',
+    accountVisibility: 'account_visibility',
+    anonymousAnalytics: 'anonymous_analytics',
+  };
+
+  const handleToggleSetting = async (category, key) => {
+    const dbKey = dbSettingKeyMap[key] || key;
+    if (updatingSettings[key]) return; // Prevent rapid multi-clicking
+
+    const currentVal = category === 'notifications' ? notifications[key] : privacy[key];
+    const newVal = !currentVal;
+
+    // 1. Show loading state & optimistic UI update
+    setUpdatingSettings((prev) => ({ ...prev, [key]: true }));
+
+    if (category === 'notifications') {
+      setNotifications((prev) => ({ ...prev, [key]: newVal }));
+      if (key === 'securityAlerts') {
+        setPrivacy((prev) => ({ ...prev, securityAlerts: newVal }));
+      }
+    } else {
+      setPrivacy((prev) => ({ ...prev, [key]: newVal }));
+      if (key === 'securityAlerts') {
+        setNotifications((prev) => ({ ...prev, securityAlerts: newVal }));
+      }
+    }
+
+    try {
+      // 2. API Request
+      const res = await settingsService.updateSetting(dbKey, newVal);
+
+      if (res && res.success) {
+        const s = res.settings;
+        setNotifications({
+          securityAlerts: s.security_alerts ?? true,
+          phishingAlerts: s.phishing_alerts ?? true,
+          passwordExpiry: s.password_expiry_alerts ?? true,
+          accountActivity: s.account_activity ?? true,
+          aiNotifications: s.ai_notifications ?? true,
+        });
+        setPrivacy({
+          emailNotifications: s.email_notifications ?? true,
+          securityAlerts: s.security_alerts ?? true,
+          aiRecommendations: s.ai_recommendations ?? true,
+          marketingEmails: s.marketing_emails ?? false,
+          accountVisibility: s.account_visibility ?? true,
+          anonymousAnalytics: s.anonymous_analytics ?? true,
+        });
+
+        const msg = res.message || `${key} ${newVal ? 'enabled' : 'disabled'}.`;
+        addToast(msg, 'success', 'Setting Updated');
+      } else {
+        throw new Error(res.message || 'Failed to update setting');
+      }
+    } catch (error) {
+      // Revert optimistic update on error
+      if (category === 'notifications') {
+        setNotifications((prev) => ({ ...prev, [key]: currentVal }));
+        if (key === 'securityAlerts') {
+          setPrivacy((prev) => ({ ...prev, securityAlerts: currentVal }));
+        }
+      } else {
+        setPrivacy((prev) => ({ ...prev, [key]: currentVal }));
+        if (key === 'securityAlerts') {
+          setNotifications((prev) => ({ ...prev, securityAlerts: currentVal }));
+        }
+      }
+      const errMessage = error.response?.data?.message || error.message || 'Failed to save setting';
+      addToast(errMessage, 'danger', 'Update Failed');
+    } finally {
+      setUpdatingSettings((prev) => ({ ...prev, [key]: false }));
+    }
+  };
 
   const securityData = {
     securityScore: profileUser?.google_id ? 82 : 78,
@@ -117,8 +230,13 @@ export const Profile = () => {
   const handleAvatarChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        addToast('Avatar must be less than 2MB', 'danger', 'File Too Large');
+      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+      if (!allowedTypes.includes(file.type.toLowerCase())) {
+        addToast('Unsupported file format. Please select a PNG, JPG, JPEG, WEBP, or GIF image.', 'danger', 'Invalid File Type');
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        addToast('Avatar image must be less than 5MB', 'danger', 'File Too Large');
         return;
       }
       setAvatarFile(file);
@@ -130,9 +248,23 @@ export const Profile = () => {
     }
   };
 
-  const handleRemoveAvatar = () => {
-    setAvatarPreview('');
-    setAvatarFile(null);
+  const handleRemoveAvatar = async () => {
+    setLoading(true);
+    try {
+      const data = await profileService.removeAvatar();
+      if (data && data.user) {
+        if (updateUser) updateUser(data.user);
+        setProfileUser(data.user);
+        setAvatarPreview('');
+        setAvatarFile(null);
+        addToast('Avatar removed successfully', 'success', 'Avatar Removed');
+      }
+    } catch (error) {
+      const msg = error.response?.data?.message || 'Failed to remove avatar';
+      addToast(msg, 'danger', 'Remove Failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSaveProfile = async () => {
@@ -142,13 +274,30 @@ export const Profile = () => {
     }
     setLoading(true);
     try {
-      const payload = { name: editName.trim() };
-      if (avatarPreview && !avatarPreview.startsWith('data:')) {
-        payload.avatar = avatarPreview;
+      let updatedUser = profileUser;
+
+      // 1. Upload avatar file if a new file was selected
+      if (avatarFile) {
+        const avatarRes = await profileService.uploadAvatar(avatarFile);
+        if (avatarRes && avatarRes.user) {
+          updatedUser = avatarRes.user;
+        }
       }
-      const data = await profileService.updateProfile(payload);
-      setProfileUser(data.user);
-      setAvatarPreview(data.user?.avatar || '');
+
+      // 2. Update name if edited
+      if (editName.trim() !== profileUser?.name) {
+        const profileRes = await profileService.updateProfile({ name: editName.trim() });
+        if (profileRes && profileRes.user) {
+          updatedUser = profileRes.user;
+        }
+      }
+
+      // 3. Update global AuthContext user state & local states
+      if (updateUser) {
+        updateUser(updatedUser);
+      }
+      setProfileUser(updatedUser);
+      setAvatarPreview(updatedUser?.avatar || '');
       setAvatarFile(null);
       addToast('Profile updated successfully', 'success', 'Profile Updated');
       setIsEditing(false);
@@ -285,10 +434,22 @@ export const Profile = () => {
               )}
             </div>
             {isEditing && (
-              <label className="absolute -bottom-2 -right-2 w-8 h-8 bg-cyan-500 rounded-full flex items-center justify-center cursor-pointer hover:bg-cyan-400 transition-colors">
-                <Camera className="w-4 h-4 text-slate-950" />
-                <input type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
-              </label>
+              <div className="absolute -bottom-2 -right-2 flex space-x-1">
+                <label className="w-8 h-8 bg-cyan-500 rounded-full flex items-center justify-center cursor-pointer hover:bg-cyan-400 transition-colors shadow-md" title="Upload Photo">
+                  <Camera className="w-4 h-4 text-slate-950" />
+                  <input type="file" accept="image/png, image/jpeg, image/jpg, image/webp, image/gif" onChange={handleAvatarChange} className="hidden" />
+                </label>
+                {avatarPreview && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveAvatar}
+                    className="w-8 h-8 bg-rose-500 rounded-full flex items-center justify-center cursor-pointer hover:bg-rose-400 transition-colors shadow-md"
+                    title="Remove Photo"
+                  >
+                    <Trash2 className="w-4 h-4 text-white" />
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
@@ -706,10 +867,11 @@ export const Profile = () => {
                   <div key={key} className="flex items-center justify-between">
                     <span className="text-xs text-slate-300">{label}</span>
                     <button
-                      onClick={() => setNotifications({ ...notifications, [key]: !notifications[key] })}
+                      onClick={() => handleToggleSetting('notifications', key)}
+                      disabled={!!updatingSettings[key]}
                       className={`w-10 h-5 rounded-full transition-all ${
                         notifications[key] ? 'bg-cyan-500' : 'bg-slate-700'
-                      }`}
+                      } ${updatingSettings[key] ? 'opacity-60 cursor-wait' : ''}`}
                     >
                       <div
                         className={`w-4 h-4 rounded-full bg-white transition-all ${
@@ -744,10 +906,11 @@ export const Profile = () => {
                   <div key={key} className="flex items-center justify-between p-3 rounded-xl bg-slate-900/50 border border-slate-800">
                     <span className="text-xs text-slate-300">{label}</span>
                     <button
-                      onClick={() => setPrivacy({ ...privacy, [key]: !privacy[key] })}
+                      onClick={() => handleToggleSetting('privacy', key)}
+                      disabled={!!updatingSettings[key]}
                       className={`w-10 h-5 rounded-full transition-all ${
                         privacy[key] ? 'bg-cyan-500' : 'bg-slate-700'
-                      }`}
+                      } ${updatingSettings[key] ? 'opacity-60 cursor-wait' : ''}`}
                     >
                       <div
                         className={`w-4 h-4 rounded-full bg-white transition-all ${

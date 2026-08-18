@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { MessageSquare, ShieldCheck, AlertTriangle, Send } from 'lucide-react';
+import { MessageSquare, ShieldCheck, AlertTriangle, Send, Cpu, AlertCircle } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { scanService } from '../services/authService';
 
@@ -8,31 +8,77 @@ export const SmsPhishing = () => {
   const [text, setText] = useState('');
   const [scanning, setScanning] = useState(false);
   const [result, setResult] = useState(null);
+  const [inputError, setInputError] = useState('');
   const { addToast } = useToast();
 
-  const handleScan = (e) => {
+  const handleScan = async (e) => {
     e.preventDefault();
-    if (!text.trim()) {
-      addToast('Please enter SMS text content to analyze.', 'warning', 'Empty Input');
+    setInputError('');
+
+    const trimmed = text.trim();
+    if (!trimmed) {
+      const err = 'SMS message content cannot be empty.';
+      setInputError(err);
+      addToast(err, 'warning', 'Empty Input');
+      return;
+    }
+
+    if (trimmed.length > 2000) {
+      const err = 'SMS message text is too long (maximum 2000 characters).';
+      setInputError(err);
+      addToast(err, 'warning', 'Text Too Long');
       return;
     }
 
     setScanning(true);
     setResult(null);
 
-    scanService.scanSms(text)
-      .then(({ result: res }) => {
-      setResult(res);
-        addToast(`SMS Analysis Complete: ${res.threatLevel} Risk`, res.riskScore >= 45 ? 'warning' : 'success', 'Scan Finished');
-      })
-      .catch((err) => {
-        const msg = err.response?.data?.message || 'Failed to analyze SMS content.';
-        addToast(msg, 'danger', 'Scan Failed');
-      })
-      .finally(() => {
-        setScanning(false);
-      });
+    try {
+      const data = await scanService.scanSms(trimmed);
+      if (data && (data.success || data.prediction || data.result)) {
+        setResult(data);
+        const prediction = data.prediction || (data.result?.threatLevel === 'HIGH' ? 'phishing' : 'legitimate');
+        const riskLevel = data.risk_level || data.result?.threatLevel || 'Low';
+        const isPhishing = prediction === 'phishing' || riskLevel === 'HIGH' || riskLevel === 'High';
+        
+        addToast(
+          `SMS Analysis Complete: ${prediction.toUpperCase()} (${riskLevel} Risk)`,
+          isPhishing ? 'danger' : 'success',
+          'Scan Complete'
+        );
+      } else {
+        const errorMsg = data?.message || 'Failed to analyze SMS content.';
+        setInputError(errorMsg);
+        addToast(errorMsg, 'danger', 'Scan Failed');
+      }
+    } catch (err) {
+      let msg = 'Failed to analyze SMS content.';
+      if (!err.response) {
+        msg = 'Backend service unavailable. Please check backend connection.';
+      } else if (err.response.status === 400) {
+        msg = err.response.data?.message || 'Invalid SMS input provided.';
+      } else if (err.response.status === 401) {
+        msg = 'You must log in to access this page.';
+      } else if (err.response.status === 500) {
+        msg = 'Server error analyzing SMS content. Please try again later.';
+      } else {
+        msg = err.response.data?.message || msg;
+      }
+      setInputError(msg);
+      addToast(msg, 'danger', 'Scan Error');
+    } finally {
+      setScanning(false);
+    }
   };
+
+  // Helper values for display
+  const prediction = result?.prediction || (result?.result?.threatLevel === 'HIGH' ? 'phishing' : 'legitimate');
+  const riskLevel = result?.risk_level || (result?.result?.threatLevel ? result.result.threatLevel.charAt(0).toUpperCase() + result.result.threatLevel.slice(1).toLowerCase() : 'Low');
+  const riskScore = result?.risk_score ?? result?.result?.riskScore ?? 0;
+  const confidence = result?.confidence ?? 90;
+  const detectedSignals = result?.detected_signals || result?.result?.detected_signals || result?.result?.factors?.map(f => f.label) || [];
+  const explanation = result?.explanation || result?.result?.explanation || '';
+  const modelEngine = result?.model || 'heuristic';
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 py-6 px-4">
@@ -41,28 +87,42 @@ export const SmsPhishing = () => {
           <MessageSquare className="w-6 h-6" />
         </div>
         <h1 className="text-3xl font-extrabold text-white">SMS Phishing Detection</h1>
-        <p className="text-xs text-slate-400">Run a heuristic review of suspicious SMS content and links using rule-based risk signals.</p>
+        <p className="text-xs text-slate-400">Analyze text messages and SMS links using threat intelligence models</p>
       </div>
 
       <div className="bg-[#0f172a]/95 border border-slate-800 rounded-2xl p-6 sm:p-8 space-y-6 shadow-xl">
         <form onSubmit={handleScan} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-2">
-              SMS Message Content
-            </label>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-xs font-semibold text-slate-300">
+                SMS Message Content
+              </label>
+              <span className="text-[11px] text-slate-500 font-mono">
+                {text.length}/2000 characters
+              </span>
+            </div>
             <textarea
               rows={4}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                if (inputError) setInputError('');
+              }}
               placeholder="Paste SMS message text here (e.g. 'URGENT: Your account has been suspended. Click here to verify: http://bit.ly/xyz')..."
               className="w-full px-4 py-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 leading-relaxed"
             />
+            {inputError && (
+              <p className="text-[11px] text-rose-400 mt-1 flex items-center space-x-1">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{inputError}</span>
+              </p>
+            )}
           </div>
 
           <button
             type="submit"
             disabled={scanning}
-            className="w-full py-3 rounded-xl bg-cyan-400 text-slate-950 font-bold text-xs hover:bg-cyan-300 transition-all flex items-center justify-center space-x-2 disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-cyan-400 text-slate-950 font-bold text-xs hover:bg-cyan-300 transition-all flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer shadow-md"
           >
             <Send className="w-4 h-4" />
             <span>{scanning ? 'Analyzing SMS Pattern...' : 'Analyze SMS Message'}</span>
@@ -74,28 +134,70 @@ export const SmsPhishing = () => {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className={`p-6 rounded-xl border ${
-              result.threatLevel === 'HIGH'
+              prediction === 'phishing' || riskLevel === 'High' || riskLevel === 'HIGH'
                 ? 'bg-rose-500/10 border-rose-500/30 text-rose-200'
-                : result.threatLevel === 'MEDIUM'
+                : riskLevel === 'Medium' || riskLevel === 'MEDIUM'
                 ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
                 : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
-            } space-y-3`}
+            } space-y-4`}
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                {result.threatLevel === 'HIGH' || result.threatLevel === 'MEDIUM' ? (
-                  <AlertTriangle className="w-5 h-5 text-rose-400" />
+            {/* Verdict & Badge Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+              <div className="flex items-center space-x-2.5">
+                {prediction === 'phishing' || riskLevel === 'High' || riskLevel === 'HIGH' || riskLevel === 'Medium' ? (
+                  <AlertTriangle className="w-6 h-6 text-rose-400 shrink-0" />
                 ) : (
-                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                  <ShieldCheck className="w-6 h-6 text-emerald-400 shrink-0" />
                 )}
-                <span className="font-bold text-sm tracking-wide">Threat Status: {result.threatLevel} RISK</span>
+                <div>
+                  <h3 className="font-bold text-sm tracking-wide text-white uppercase">
+                    Prediction: {prediction === 'phishing' ? 'PHISHING' : 'LEGITIMATE'}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Risk Level: <span className="font-semibold text-slate-200">{riskLevel} Risk</span>
+                  </p>
+                </div>
               </div>
-              <span className="text-xs px-2.5 py-1 rounded-full bg-slate-900 border border-slate-700 font-mono">
-                Risk Score: {result.riskScore}%
-              </span>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs px-2.5 py-1 rounded-full bg-slate-900 border border-slate-700 font-mono text-cyan-400">
+                  Risk Score: {riskScore}%
+                </span>
+                <span className="text-xs px-2.5 py-1 rounded-full bg-slate-900 border border-slate-700 font-mono text-slate-300">
+                  Confidence: {confidence}%
+                </span>
+                <span className="text-xs px-2.5 py-1 rounded-full bg-slate-900 border border-cyan-500/30 font-mono text-cyan-300 flex items-center space-x-1">
+                  <Cpu className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span>model: {modelEngine}</span>
+                </span>
+              </div>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">{result.explanation}</p>
-            <p className="text-xs text-slate-400 leading-relaxed">{result.coaching}</p>
+
+            {/* Explanation */}
+            {explanation && (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold text-slate-300">Explanation:</p>
+                <p className="text-xs text-slate-300 leading-relaxed">{explanation}</p>
+              </div>
+            )}
+
+            {/* Detected Signals */}
+            {detectedSignals && detectedSignals.length > 0 && (
+              <div className="space-y-2 pt-1">
+                <p className="text-xs font-semibold text-slate-300">Detected Signals:</p>
+                <div className="flex flex-wrap gap-2">
+                  {detectedSignals.map((signal, idx) => (
+                    <span
+                      key={idx}
+                      className="px-2.5 py-1 rounded-lg bg-rose-500/20 border border-rose-500/40 text-rose-300 text-[11px] font-medium flex items-center space-x-1"
+                    >
+                      <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0" />
+                      <span>{signal}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
       </div>

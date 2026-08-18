@@ -53,7 +53,7 @@ const GoogleSignInButtonContent = ({
 };
 
 /**
- * Google Sign-In button with responsive pixel width (GSI requires 200–400px, not "%").
+ * Reusable Google Sign-In component using @react-oauth/google.
  */
 export const GoogleSignInButton = ({
   onSuccess,
@@ -67,8 +67,8 @@ export const GoogleSignInButton = ({
   if (!configuredClientId) {
     return (
       <div className="w-full flex justify-center">
-        <div className="w-full max-w-[400px] rounded-full border border-slate-700 bg-slate-800/70 px-4 py-2 text-center text-sm text-slate-300">
-          Google sign-in is currently unavailable.
+        <div className="w-full max-w-[400px] rounded-full border border-slate-700 bg-slate-800/70 px-4 py-2 text-center text-xs text-slate-400">
+          Google Sign-In is unavailable (Missing VITE_GOOGLE_CLIENT_ID)
         </div>
       </div>
     );

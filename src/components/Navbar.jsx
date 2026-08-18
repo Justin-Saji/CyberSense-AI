@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, X, Shield, LogOut, User, LayoutDashboard, Home, Info, Grid, Lock, UserPlus, MessageSquare, Mail, Globe, FileText, Settings } from 'lucide-react';
+import { Menu, X, Shield, LogOut, User, LayoutDashboard, Home, Info, Grid, Lock, UserPlus, FileText, Settings } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
 export const Navbar = () => {
@@ -17,23 +17,20 @@ export const Navbar = () => {
 
   const navLinks = isAuthenticated
     ? [
-        { name: 'Home', path: '/', icon: Home },
-        { name: 'Features', path: '/features', icon: Grid },
-        { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-        { name: 'SMS Scan', path: '/sms-phishing', icon: MessageSquare },
-        { name: 'Email Scan', path: '/email-phishing', icon: Mail },
-        { name: 'URL Scanner', path: '/url-scanner', icon: Globe },
-        { name: 'Reports', path: '/reports', icon: FileText },
-        { name: 'Profile', path: '/profile', icon: User },
-        { name: 'Settings', path: '/settings', icon: Settings },
-      ]
+      { name: 'Home', path: '/', icon: Home },
+      { name: 'Features', path: '/features', icon: Grid },
+      { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+      { name: 'Reports', path: '/reports', icon: FileText },
+      { name: 'Profile', path: '/profile', icon: User },
+      { name: 'Settings', path: '/settings', icon: Settings },
+    ]
     : [
-        { name: 'Home', path: '/', icon: Home },
-        { name: 'Features', path: '/features', icon: Grid },
-        { name: 'About', path: '/about', icon: Info },
-        { name: 'Login', path: '/login', icon: Lock },
-        { name: 'Register', path: '/register', icon: UserPlus },
-      ];
+      { name: 'Home', path: '/', icon: Home },
+      { name: 'Features', path: '/features', icon: Grid },
+      { name: 'About', path: '/about', icon: Info },
+      { name: 'Login', path: '/login', icon: Lock },
+      { name: 'Register', path: '/register', icon: UserPlus },
+    ];
 
   const isActive = (path) => location.pathname === path;
 
@@ -64,13 +61,16 @@ export const Navbar = () => {
               <Link
                 key={link.path}
                 to={link.path}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 flex items-center space-x-1.5 ${
-                  active
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 flex items-center space-x-1.5 ${active
                     ? 'text-cyan-400 bg-cyan-500/10 border border-cyan-500/20'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-                }`}
+                  }`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                {link.path === '/profile' && user?.avatar ? (
+                  <img src={user.avatar} className="w-4 h-4 rounded-full object-cover border border-cyan-400/50" alt="User Avatar" />
+                ) : (
+                  <Icon className="w-3.5 h-3.5" />
+                )}
                 <span>{link.name}</span>
               </Link>
             );
@@ -117,11 +117,10 @@ export const Navbar = () => {
                   key={link.path}
                   to={link.path}
                   onClick={() => setMobileOpen(false)}
-                  className={`flex items-center space-x-3 px-3.5 py-2 rounded-lg text-xs font-medium ${
-                    isActive(link.path)
+                  className={`flex items-center space-x-3 px-3.5 py-2 rounded-lg text-xs font-medium ${isActive(link.path)
                       ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
                       : 'text-slate-300 hover:bg-slate-800'
-                  }`}
+                    }`}
                 >
                   <Icon className="w-4 h-4" />
                   <span>{link.name}</span>

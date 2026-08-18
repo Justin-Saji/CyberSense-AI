@@ -92,6 +92,13 @@ export const AuthProvider = ({ children }) => {
     setIsAuthenticated(false);
   };
 
+  const updateUser = (updatedUser) => {
+    if (updatedUser) {
+      setUser(updatedUser);
+      localStorage.setItem('cybersense_user', JSON.stringify(updatedUser));
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -104,6 +111,7 @@ export const AuthProvider = ({ children }) => {
         forgotPassword,
         resetPassword,
         googleLogin,
+        updateUser,
       }}
     >
       {children}
