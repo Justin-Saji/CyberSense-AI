@@ -470,9 +470,7 @@ export const Profile = () => {
               <span>{profileUser?.email || 'user@example.com'}</span>
             </p>
             <div className="flex items-center justify-center md:justify-start space-x-2">
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${securityData.googleConnected ? 'bg-purple-500/20 text-purple-400' : 'bg-slate-500/20 text-slate-400'}`}>
-                {securityData.googleConnected ? 'Google Connected' : 'Google Not Connected'}
-              </span>
+              
               <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold">
                 {securityData.accountStatus}
               </span>

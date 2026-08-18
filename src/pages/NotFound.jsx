@@ -19,7 +19,7 @@ export const NotFound = () => {
 
         <div className="space-y-2">
           <span className="text-xs font-extrabold uppercase tracking-widest text-rose-400 font-mono">
-            ERR_404_ACCESS_DENIED
+            ERR 404 PAGE NOT FOUND
           </span>
           <h1 className="text-3xl font-extrabold text-white">Page Not Found</h1>
           <p className="text-xs text-slate-400 leading-relaxed">
@@ -30,7 +30,7 @@ export const NotFound = () => {
         <div className="pt-2 flex justify-center">
           <Link to="/">
             <PrimaryButton icon={ArrowLeft}>
-              Return to Main Page
+              Return to Home Page
             </PrimaryButton>
           </Link>
         </div>
