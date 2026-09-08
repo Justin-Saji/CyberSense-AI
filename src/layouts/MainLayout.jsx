@@ -4,6 +4,7 @@ import { Navbar } from '../components/Navbar';
 import { Footer } from '../components/Footer';
 import { BackgroundCanvas } from '../components/BackgroundCanvas';
 import { Toast } from '../components/common/Toast';
+import { ChatWidget } from '../components/ChatWidget';
 
 export const MainLayout = () => {
   return (
@@ -15,6 +16,7 @@ export const MainLayout = () => {
       </main>
       <Footer />
       <Toast />
+      <ChatWidget />
     </div>
   );
 };

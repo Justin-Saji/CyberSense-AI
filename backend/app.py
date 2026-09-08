@@ -8,6 +8,11 @@ from functools import wraps
 
 import io
 from dotenv import load_dotenv
+
+# Load environment variables before any other imports
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 from reportlab.lib.pagesizes import letter
@@ -27,13 +32,11 @@ from services.sms_analyzer import sms_analyzer
 from services.email_analyzer import email_analyzer
 from services.url_analyzer import url_analyzer
 from services.notification_service import notification_service
+from services.ai_chat_service import ai_chat_service
 
 # ─── App Init ────────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
-
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -3088,6 +3091,27 @@ def update_user_settings_api():
         "email_sent": email_sent,
         "settings": user_settings.to_dict()
     }), 200
+
+
+# ─── Chatbot API ─────────────────────────────────────────────────────────────
+
+@app.route("/api/chat", methods=["POST"])
+def chat_api():
+    # We might want to enforce authentication here eventually, 
+    # but currently leaving open or relying on frontend depending on user config.
+    data = request.get_json(silent=True) or {}
+    
+    conversation = data.get("conversation")
+    
+    if not conversation or not isinstance(conversation, list):
+        return jsonify({"success": False, "message": "Invalid conversation data."}), 400
+        
+    result = ai_chat_service.get_chat_response(conversation)
+    
+    if result.get("success"):
+        return jsonify(result), 200
+    else:
+        return jsonify(result), 500
 
 
 # ─── DB Init ─────────────────────────────────────────────────────────────────
