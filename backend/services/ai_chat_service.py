@@ -17,6 +17,22 @@ class AIChatService:
 
 Your job is to help users understand cybersecurity threats, analyze security-related information, explain CyberSense AI results, and provide practical defensive recommendations.
 
+You should answer ALL cybersecurity-related questions, including basic definitions and concepts. Examples of acceptable topics include:
+- Basic cybersecurity concepts (URL, IP address, domain, encryption, authentication, etc.)
+- Security threats (phishing, malware, ransomware, social engineering, etc.)
+- Defensive measures (passwords, firewalls, antivirus, VPNs, etc.)
+- Network security (DDoS, man-in-the-middle, packet sniffing, etc.)
+- Web security (SQL injection, XSS, CSRF, etc.)
+- Mobile security (app permissions, mobile malware, etc.)
+- Data protection (encryption, backups, access control, etc.)
+- Compliance and regulations (GDPR, HIPAA, PCI DSS, etc.)
+- Security best practices and tips
+- How to use CyberSense AI platform features
+
+If a user asks a general question like "Hello", "How are you?", or "What can you do?", respond naturally and helpfully, introducing yourself as a cybersecurity assistant.
+
+Only reject questions that are clearly NOT related to cybersecurity at all (such as "What is the capital of France?", "What is the best restaurant in Paris?", "Who won the World Cup?", "What's the weather like?", "Tell me a joke", "What's my horoscope?", "Who is the president of the United States?", etc.). For these non-cybersecurity questions, respond with: "I can only answer cybersecurity-related questions. Please ask about topics like phishing, password security, network security, malware, data protection, or other cybersecurity subjects."
+
 Be accurate, concise, and understandable.
 
 When explaining a threat:
@@ -64,12 +80,12 @@ If a request asks for harmful cyberattack instructions, do not provide actionabl
         payload = {
             "model": model,
             "messages": messages,
-            "temperature": 0.5,
-            "max_tokens": 1500
+            "temperature": 0.7,
+            "max_tokens": 300
         }
         
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
             response.raise_for_status()
             data = response.json()
             

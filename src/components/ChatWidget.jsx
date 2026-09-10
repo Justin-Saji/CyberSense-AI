@@ -67,7 +67,16 @@ export const ChatWidget = () => {
       }
     } catch (err) {
       console.error('Chat error:', err);
-      const errorMsg = err.response?.data?.message || err.message || 'CyberSense AI is temporarily unavailable.';
+      let errorMsg = 'CyberSense AI is temporarily unavailable. Please try again.';
+      
+      if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+        errorMsg = 'Request timed out. Please try a shorter question.';
+      } else if (err.response?.data?.message) {
+        errorMsg = err.response.data.message;
+      } else if (err.message) {
+        errorMsg = err.message;
+      }
+      
       addToast(errorMsg, 'danger', 'Error');
     } finally {
       setIsLoading(false);

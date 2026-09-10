@@ -49,7 +49,7 @@ export const Register = () => {
 
   // ─── Live validation ──────────────────────────────────────────────────────
 
-  const getFieldErrors = useCallback((data) => {
+  const getFieldErrors = useCallback((data, checkTerms = false) => {
     const errs = {};
 
     const nameErr = validateName(data.name);
@@ -70,8 +70,11 @@ export const Register = () => {
       errs.confirmPassword = 'Passwords do not match.';
     }
 
-    if (!data.acceptTerms) {
-      errs.acceptTerms = 'You must accept the Terms & Conditions.';
+    // Only check terms if all other fields are filled and checkTerms is true
+    if (checkTerms && data.name && data.email && data.password && data.confirmPassword) {
+      if (!data.acceptTerms) {
+        errs.acceptTerms = 'You must accept the Terms & Conditions.';
+      }
     }
 
     return errs;
@@ -84,17 +87,30 @@ export const Register = () => {
     const newData = { ...formData, [name]: val };
     setFormData(newData);
 
-    // Revalidate live once a field has been touched
-    if (touched[name] !== undefined) {
-      const newErrs = getFieldErrors(newData);
+    // Revalidate live once a field has been touched (except terms checkbox)
+    if (touched[name] !== undefined && name !== 'acceptTerms') {
+      const newErrs = getFieldErrors(newData, false);
       setErrors(newErrs);
+    }
+    
+    // Handle terms checkbox validation - only validate if all other fields are filled
+    if (name === 'acceptTerms') {
+      const allFieldsFilled = newData.name && newData.email && newData.password && newData.confirmPassword;
+      if (allFieldsFilled && !val) {
+        setErrors(prev => ({ ...prev, acceptTerms: 'You must accept the Terms & Conditions.' }));
+      } else {
+        setErrors(prev => {
+          const { acceptTerms, ...rest } = prev;
+          return rest;
+        });
+      }
     }
   };
 
   const handleBlur = (e) => {
     const { name } = e.target;
     setTouched((prev) => ({ ...prev, [name]: true }));
-    const newErrs = getFieldErrors(formData);
+    const newErrs = getFieldErrors(formData, false);
     setErrors(newErrs);
   };
 
@@ -105,7 +121,10 @@ export const Register = () => {
 
     // Mark all fields touched on submit attempt
     setTouched({ name: true, email: true, password: true, confirmPassword: true });
-    const valErrors = getFieldErrors(formData);
+    
+    // Check terms validation only when all other fields are filled
+    const checkTerms = formData.name && formData.email && formData.password && formData.confirmPassword;
+    const valErrors = getFieldErrors(formData, checkTerms);
     setErrors(valErrors);
     if (Object.keys(valErrors).length > 0) return;
 
@@ -174,7 +193,7 @@ export const Register = () => {
   // ─── Derived ──────────────────────────────────────────────────────────────
 
   const allTouched   = Object.values(touched).every(Boolean);
-  const liveErrors   = getFieldErrors(formData);
+  const liveErrors   = getFieldErrors(formData, false);
   const isFormValid  = allTouched && Object.keys(liveErrors).length === 0;
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -341,7 +360,7 @@ export const Register = () => {
           {/* Create Account Button */}
           <button
             type="submit"
-            disabled={loading || !isFormValid}
+            disabled={loading}
             className="w-full md:col-span-2 py-3 rounded-xl bg-cyan-400 text-slate-950 font-semibold hover:bg-cyan-300 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {loading && <Loader2 className="w-4 h-4 animate-spin" />}

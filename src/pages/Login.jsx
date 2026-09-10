@@ -61,13 +61,6 @@ export const Login = () => {
     return newErrors;
   }, [email, password]);
 
-  const isFormValid = useCallback(() => {
-    const trimmedEmail = email.trim();
-    const hasEmail = trimmedEmail && isValidEmail(trimmedEmail);
-    const hasPassword = password && password.length >= 6;
-    return hasEmail && hasPassword;
-  }, [email, password]);
-
   const handleEmailChange = (e) => {
     const value = e.target.value;
     setEmail(value);
@@ -335,7 +328,7 @@ export const Login = () => {
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={loading || !isFormValid()}
+            disabled={loading}
             className="w-full py-3 rounded-xl bg-cyan-400 text-slate-950 font-semibold text-xs hover:bg-cyan-300 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed mt-2 flex items-center justify-center gap-2"
           >
             {loading ? (
@@ -390,7 +383,7 @@ export const Login = () => {
               <div className="flex gap-2">
                 <button
                   type="submit"
-                  disabled={forgotLoading || !forgotEmail.trim() || !isValidEmail(forgotEmail.trim())}
+                  disabled={forgotLoading}
                   className="flex-1 py-2 rounded-xl bg-cyan-400 text-slate-950 font-semibold text-xs hover:bg-cyan-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {forgotLoading ? (
