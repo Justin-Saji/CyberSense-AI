@@ -14,7 +14,10 @@ __pycache__/
 *.py[cod]
 venv/
 .venv/
-
+# ML training outputs
+**/checkpoints/
+**/results/
+**/sms_distilbert_model/    
 
 # IDE
 .vscode/
