@@ -1,0 +1,37 @@
+{
+    "project": "CyberSense AI",
+    "feature": "SMS Phishing Detection",
+    "model": "distilbert-base-uncased",
+    "architecture": {
+        "base_model": "DistilBERT",
+        "activation": "GELU",
+        "transformer_layers": 6
+    },
+    "dataset": {
+        "file": "C:\\Users\\user\\OneDrive\\Desktop\\CYBERSENSE AI\\Models - SMS feature\\DistilBERT_Activation\\data\\spam.csv",
+        "total_samples": 5572,
+        "training_samples": 4457,
+        "testing_samples": 1115
+    },
+    "labels": {
+        "0": "ham",
+        "1": "spam"
+    },
+    "tokenization": {
+        "max_length": 128,
+        "truncation": true
+    },
+    "training": {
+        "learning_rate": 3e-05,
+        "epochs": 5,
+        "batch_size": 8,
+        "weight_decay": 0.01,
+        "seed": 42
+    },
+    "performance": {
+        "accuracy": 0.9937219730941704,
+        "precision": 0.9863013698630136,
+        "recall": 0.9664429530201343,
+        "f1": 0.976271186440678
+    }
+}
