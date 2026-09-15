@@ -165,7 +165,7 @@ export const settingsService = {
 
 export const scanService = {
   async scanSms(message) {
-    const response = await api.post('/analyze/sms', { message });
+    const response = await api.post('/scan/sms', { message });
     return response.data;
   },
 

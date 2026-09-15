@@ -1,141 +1,334 @@
 """
 SMS Analyzer Service Module for CyberSense AI
 ==============================================
-Provides modular architecture for SMS phishing detection.
-Currently implements a rule-based/heuristic analysis engine ("model": "heuristic")
-with a clean interface designed to plug in trained ML / Transformer models (e.g., DistilBERT) seamlessly.
+
+Uses the locally trained DistilBERT model for SMS spam/phishing detection.
+
+Model:
+    DistilBERT Sequence Classification
+
+Training Labels:
+    0 = HAM
+    1 = SPAM
+
+Important:
+    The model prediction is based entirely on the trained
+    DistilBERT model. No keyword/rule-based detection is used.
 """
 
-import re
-from typing import Dict, Any, List, Optional
+import os
+from pathlib import Path
+from typing import Dict, Any
 
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+
+# ============================================================
+# MODEL PATH
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+MODEL_PATH = (
+    BASE_DIR
+    / "Models - SMS feature"
+    / "DistilBERT_Activation"
+    / "sms_distilbert_model"
+)
+
+
+# ============================================================
+# SMS ANALYZER
+# ============================================================
 
 class SMSAnalyzer:
     """
-    Modular SMS Analyzer Service.
-    
-    Architecture Design:
-    - `model_type` defaults to "heuristic".
-    - When your ML/Transformer model (e.g. DistilBERT) is trained, pass `model_type="DistilBERT"`
-      or load weights via `load_ml_model()` to switch execution automatically.
+    SMS analyzer using the locally trained DistilBERT model.
+
+    The final classification is produced entirely by the
+    trained DistilBERT model.
     """
-    
-    def __init__(self, model_type: str = "heuristic"):
-        self.model_type = model_type
+
+    def __init__(self, model_path: str):
+
+        self.model_path = model_path
+        self.tokenizer = None
         self.ml_model_instance = None
 
-    def load_ml_model(self, model_path_or_name: str):
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+
+        self.load_ml_model()
+
+    # ========================================================
+    # LOAD DISTILBERT MODEL
+    # ========================================================
+
+    def load_ml_model(self):
         """
-        Plug in trained ML / Transformer model weights (e.g. DistilBERT).
-        Example usage:
-            sms_analyzer.load_ml_model("path/to/distilbert_sms_phishing_model")
+        Load the trained DistilBERT tokenizer and model.
         """
-        # Placeholder for loading PyTorch / HuggingFace Transformers model
-        # from transformers import AutoTokenizer, AutoModelForSequenceClassification
-        # self.tokenizer = AutoTokenizer.from_pretrained(model_path_or_name)
-        # self.ml_model_instance = AutoModelForSequenceClassification.from_pretrained(model_path_or_name)
-        self.model_type = "DistilBERT"
+
+        if not os.path.exists(self.model_path):
+            raise FileNotFoundError(
+                f"DistilBERT model directory not found: {self.model_path}"
+            )
+
+        print("=" * 60)
+        print("Loading CyberSense AI SMS DistilBERT model...")
+        print(f"Model path: {self.model_path}")
+        print(f"Device: {self.device}")
+        print("=" * 60)
+
+        # Load tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_path
+        )
+
+        # Load trained model
+        self.ml_model_instance = (
+            AutoModelForSequenceClassification.from_pretrained(
+                self.model_path
+            )
+        )
+
+        # Move model to CPU/GPU
+        self.ml_model_instance.to(self.device)
+
+        # Evaluation mode
+        self.ml_model_instance.eval()
+
+        print("DistilBERT SMS model loaded successfully.")
+
+        print(
+            f"Model labels: {self.ml_model_instance.config.id2label}"
+        )
+
+        print("=" * 60)
+
+    # ========================================================
+    # MAIN ANALYSIS FUNCTION
+    # ========================================================
 
     def analyze(self, text: str) -> Dict[str, Any]:
-        """
-        Main entrypoint for SMS text analysis.
-        
-        Input:
-            text (str): The SMS text entered by the user.
-            
-        Output:
-            dict containing standard CyberSense AI response format.
-        """
+
         clean_text = text.strip() if text else ""
-        
+
+        # Empty input validation
         if not clean_text:
             return {
                 "success": False,
                 "message": "SMS content cannot be empty."
             }
 
+        # Maximum input validation
         if len(clean_text) > 2000:
             return {
                 "success": False,
-                "message": "SMS text is too long (maximum 2000 characters allowed)."
+                "message": (
+                    "SMS text is too long "
+                    "(maximum 2000 characters allowed)."
+                )
             }
 
-        if self.model_type == "DistilBERT" and self.ml_model_instance is not None:
-            return self._predict_distilbert(clean_text)
-        else:
-            return self._predict_heuristic(clean_text)
+        # Send directly to DistilBERT
+        return self._predict_distilbert(clean_text)
 
-    def _predict_heuristic(self, text: str) -> Dict[str, Any]:
-        """
-        Rule-based heuristic risk engine.
-        Identifies urgency language, credential harvesting, financial lures,
-        and suspicious link patterns.
-        """
-        lowered = text.lower()
-        detected_signals: List[str] = []
-        score = 5
-
-        rules = [
-            ("Urgent call-to-action language", ["urgent", "immediately", "limited time", "act now", "action required", "asap", "24 hours", "expires today"], 25),
-            ("Credential/identity verification request", ["verify", "password", "otp", "pin", "account", "login", "authenticate", "confirm identity"], 25),
-            ("Financial/prize/reward lure", ["bank", "card", "payment", "refund", "prize", "winner", "reward", "cash", "crypto", "dollars", "$"], 20),
-            ("Suspicious link / shortened URL", ["http://", "https://", "bit.ly", "tinyurl", "goo.gl", "t.co", "is.gd", ".xyz", ".top", ".click"], 25),
-            ("Account security threat", ["blocked", "suspended", "locked", "unauthorized", "compromised", "security alert"], 15),
-            ("Impersonation / claim prompt", ["reply stop", "claim now", "text back", "congratulations", "free gift"], 10)
-        ]
-
-        for label, keywords, weight in rules:
-            if any(kw in lowered for kw in keywords):
-                score += weight
-                detected_signals.append(label)
-
-        # Bound risk_score between 0 and 100
-        risk_score = min(score, 100)
-
-        # Determine prediction and risk level
-        if risk_score >= 60:
-            prediction = "phishing"
-            risk_level = "High"
-            confidence = min(80.0 + (risk_score - 60) * 0.45, 98.5)
-        elif risk_score >= 35:
-            prediction = "phishing"
-            risk_level = "Medium"
-            confidence = 72.0
-        else:
-            prediction = "legitimate"
-            risk_level = "Low"
-            confidence = min(85.0 + (35 - risk_score) * 0.4, 99.0)
-
-        if detected_signals:
-            explanation = f"Detected {len(detected_signals)} suspicious smishing indicator(s): " + ", ".join(detected_signals) + "."
-        else:
-            explanation = "No common SMS phishing keywords or suspicious link patterns were detected in the text."
-
-        return {
-            "success": True,
-            "analysis_type": "sms",
-            "prediction": prediction,
-            "risk_level": risk_level,
-            "risk_score": risk_score,
-            "confidence": round(confidence, 1),
-            "detected_signals": detected_signals,
-            "explanation": explanation,
-            "model": "heuristic",
-            "message": "SMS analysis completed successfully."
-        }
+    # ========================================================
+    # DISTILBERT PREDICTION
+    # ========================================================
 
     def _predict_distilbert(self, text: str) -> Dict[str, Any]:
-        """
-        Placeholder for DistilBERT transformer model prediction.
-        Ready to execute PyTorch inference when weights are loaded.
-        """
-        # Example implementation when model is loaded:
-        # inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
-        # outputs = self.ml_model_instance(**inputs)
-        # probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
-        # ...
-        raise NotImplementedError("DistilBERT model weights not yet loaded. Using heuristic engine.")
+
+        try:
+
+            # ------------------------------------------------
+            # TOKENIZATION
+            # ------------------------------------------------
+
+            inputs = self.tokenizer(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                padding=True,
+                max_length=512
+            )
+
+            # Move tensors to selected device
+            inputs = {
+                key: value.to(self.device)
+                for key, value in inputs.items()
+            }
+
+            # ------------------------------------------------
+            # MODEL INFERENCE
+            # ------------------------------------------------
+
+            with torch.no_grad():
+
+                outputs = self.ml_model_instance(**inputs)
+
+                probabilities = torch.softmax(
+                    outputs.logits,
+                    dim=-1
+                )
+
+            # ------------------------------------------------
+            # PREDICTED CLASS
+            # ------------------------------------------------
+
+            predicted_class = torch.argmax(
+                probabilities,
+                dim=-1
+            ).item()
+
+            # ------------------------------------------------
+            # MODEL CONFIDENCE
+            # ------------------------------------------------
+
+            confidence = (
+                probabilities[0][predicted_class].item() * 100
+            )
+
+            # ------------------------------------------------
+            # LABEL
+            # ------------------------------------------------
+
+            label = self.ml_model_instance.config.id2label.get(
+                predicted_class,
+                str(predicted_class)
+            )
+
+            label = label.upper()
+
+            # ------------------------------------------------
+            # SPAM PROBABILITY
+            # ------------------------------------------------
+
+            spam_probability = (
+                probabilities[0][1].item() * 100
+            )
+
+            spam_probability = round(
+                spam_probability,
+                1
+            )
+
+            # ------------------------------------------------
+            # CLASSIFICATION
+            # ------------------------------------------------
+
+            is_spam = label == "SPAM"
+
+            if is_spam:
+
+                prediction = "phishing"
+
+            else:
+
+                prediction = "legitimate"
+
+            # ------------------------------------------------
+            # RISK SCORE
+            #
+            # Risk score represents the probability that
+            # the model assigns to the SPAM class.
+            # ------------------------------------------------
+
+            risk_score = spam_probability
+
+            # ------------------------------------------------
+            # RISK LEVEL
+            # ------------------------------------------------
+
+            if risk_score >= 70:
+
+                risk_level = "High"
+
+            elif risk_score >= 40:
+
+                risk_level = "Medium"
+
+            else:
+
+                risk_level = "Low"
+
+            # ------------------------------------------------
+            # EXPLANATION
+            # ------------------------------------------------
+
+            if is_spam:
+
+                explanation = (
+                    "The trained DistilBERT model classified "
+                    "this SMS as SPAM based on patterns learned "
+                    "from the SMS training dataset."
+                )
+
+            else:
+
+                explanation = (
+                    "The trained DistilBERT model classified "
+                    "this SMS as HAM (legitimate/non-spam) "
+                    "based on patterns learned from the SMS "
+                    "training dataset."
+                )
+
+            # ------------------------------------------------
+            # FINAL RESPONSE
+            # ------------------------------------------------
+
+            return {
+
+                "success": True,
+
+                "analysis_type": "sms",
+
+                "prediction": prediction,
+
+                "classification": label,
+
+                "risk_level": risk_level,
+
+                "risk_score": risk_score,
+
+                "confidence": round(
+                    confidence,
+                    1
+                ),
+
+                # No manually defined keyword rules
+                "detected_signals": [],
+
+                "explanation": explanation,
+
+                "model": "DistilBERT",
+
+                "message": (
+                    "SMS analysis completed successfully."
+                )
+            }
+
+        except Exception as e:
+
+            print(f"Prediction error: {e}")
+
+            return {
+
+                "success": False,
+
+                "message": "SMS analysis failed.",
+
+                "error": str(e)
+            }
 
 
-# Export default singleton instance
-sms_analyzer = SMSAnalyzer(model_type="heuristic")
+# ============================================================
+# SINGLETON INSTANCE
+# ============================================================
+
+sms_analyzer = SMSAnalyzer(
+    model_path=MODEL_PATH
+)

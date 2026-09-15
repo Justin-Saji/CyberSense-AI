@@ -15,6 +15,7 @@ __pycache__/
 venv/
 .venv/
 
+
 # IDE
 .vscode/
 .idea/
@@ -29,3 +30,12 @@ git_log_extended_version.txt
 # Local files
 Models/
 geo_tagged_pic.jpeg
+
+# Python virtual environments anywhere in the project
+**/.venv/
+**/.venv_broken/
+**/venv/
+
+
+# Office temporary/lock files
+~$*
