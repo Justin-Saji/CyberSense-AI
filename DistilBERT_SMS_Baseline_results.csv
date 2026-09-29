@@ -1,0 +1,2 @@
+model,activation,transformer_layers,learning_rate,epochs,batch_size,weight_decay,max_length,accuracy,precision,recall,f1,test_samples,seed
+distilbert-base-uncased,GELU,6,3e-05,5,8,0.01,128,0.9937219730941704,0.9863013698630136,0.9664429530201343,0.976271186440678,1115,42
