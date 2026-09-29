@@ -175,9 +175,12 @@ export const scanService = {
   },
 
   async scanEmail(content) {
-    const response = await api.post('/analyze/email', { content });
-    return response.data;
-  },
+  const response = await api.post('/scan/email', {
+    content,
+  });
+
+  return response.data;
+},
 
   async analyzeEmail(content) {
     const response = await api.post('/analyze/email', { content });

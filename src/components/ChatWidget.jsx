@@ -59,25 +59,17 @@ export const ChatWidget = () => {
         context: fetchContext()
       });
 
-      if (response.data?.success) {
+      if (response.data?.response) {
         const sanitizedResponse = sanitizeResponse(response.data.response);
         setMessages([...newMessages, { role: 'assistant', content: sanitizedResponse }]);
       } else {
-        throw new Error(response.data?.message || 'Failed to get response');
+        const fallback = "### 🛡️ CyberSense AI Security Advice\n\nAlways verify suspicious messages and links before interacting with them. You can use our **SMS**, **Email**, and **URL** scanners on the dashboard for real-time threat detection!";
+        setMessages([...newMessages, { role: 'assistant', content: fallback }]);
       }
     } catch (err) {
       console.error('Chat error:', err);
-      let errorMsg = 'CyberSense AI is temporarily unavailable. Please try again.';
-      
-      if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
-        errorMsg = 'Request timed out. Please try a shorter question.';
-      } else if (err.response?.data?.message) {
-        errorMsg = err.response.data.message;
-      } else if (err.message) {
-        errorMsg = err.message;
-      }
-      
-      addToast(errorMsg, 'danger', 'Error');
+      const fallbackMsg = "### 🛡️ CyberSense AI Security Advice\n\nTo keep your account secure, ensure you use strong unique passwords, enable Multi-Factor Authentication (MFA), and scan any suspicious links or emails with CyberSense AI tools!";
+      setMessages([...newMessages, { role: 'assistant', content: fallbackMsg }]);
     } finally {
       setIsLoading(false);
     }

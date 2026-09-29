@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Shield, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { adminAuthService } from '../../services/adminService';
+import GoogleSignInButton from '../../components/GoogleSignInButton';
 
 const AdminLogin = () => {
   const navigate = useNavigate();
@@ -41,6 +42,28 @@ const AdminLogin = () => {
     }
   };
 
+  const handleGoogleSuccess = async (credentialResponse) => {
+    if (!credentialResponse.credential) {
+      setError('Google authentication failed. No token received.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      await adminAuthService.googleLogin(credentialResponse.credential);
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(err.response?.data?.message || 'Google login failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleError = () => {
+    setError('Google Sign-In was cancelled or failed.');
+  };
+
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
@@ -54,13 +77,28 @@ const AdminLogin = () => {
         </div>
 
         {/* Login form */}
-        <div className="bg-slate-800 rounded-2xl p-8 border border-slate-700 shadow-xl">
+        <div className="bg-slate-800 rounded-2xl p-8 border border-slate-700 shadow-xl space-y-6">
           {error && (
-            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-3">
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
               <p className="text-red-400 text-sm">{error}</p>
             </div>
           )}
+
+          {/* Google Sign In Button */}
+          <div className="space-y-4">
+            <GoogleSignInButton
+              onSuccess={handleGoogleSuccess}
+              onError={handleGoogleError}
+              text="continue_with"
+            />
+            <div className="relative flex items-center justify-center">
+              <div className="border-t border-slate-700 w-full"></div>
+              <span className="bg-slate-800 px-3 text-[11px] text-slate-400 font-medium uppercase tracking-wider absolute">
+                or sign in with email
+              </span>
+            </div>
+          </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Email field */}

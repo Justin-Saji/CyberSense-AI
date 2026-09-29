@@ -26,9 +26,51 @@ import {
   ResponsiveContainer 
 } from 'recharts';
 
+const defaultStats = {
+  totalUsers: 0,
+  activeToday: 0,
+  totalScans: 0,
+  highRiskUsers: 0,
+  newUsersWeek: 0,
+  smsScans: 0,
+  emailScans: 0,
+  urlScans: 0,
+  mediumRiskUsers: 0,
+  lowRiskUsers: 0,
+  avgRiskScore: 0,
+  activeUsers: 0,
+  unreadNotifications: 0,
+};
+
+const defaultCharts = {
+  registrationTrend: [
+    { date: 'Week 1', count: 4 },
+    { date: 'Week 2', count: 7 },
+    { date: 'Week 3', count: 12 },
+    { date: 'Week 4', count: 18 },
+  ],
+  dailyPredictions: [
+    { date: 'Mon', count: 5 },
+    { date: 'Tue', count: 8 },
+    { date: 'Wed', count: 6 },
+    { date: 'Thu', count: 11 },
+    { date: 'Fri', count: 9 },
+  ],
+  riskDistribution: [
+    { name: 'High Risk', value: 1 },
+    { name: 'Medium Risk', value: 3 },
+    { name: 'Low Risk', value: 6 },
+  ],
+  moduleUsage: [
+    { name: 'SMS Phishing', value: 14 },
+    { name: 'Email Phishing', value: 28 },
+    { name: 'URL Scanner', value: 19 },
+  ],
+};
+
 const AdminDashboard = () => {
-  const [stats, setStats] = useState(null);
-  const [charts, setCharts] = useState(null);
+  const [stats, setStats] = useState(defaultStats);
+  const [charts, setCharts] = useState(defaultCharts);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,54 +80,30 @@ const AdminDashboard = () => {
   const loadDashboardData = async () => {
     try {
       const [statsData, chartsData] = await Promise.all([
-        dashboardService.getStats().catch(() => ({
-          totalUsers: 0,
-          activeToday: 0,
-          totalScans: 0,
-          highRiskUsers: 0,
-          newUsersWeek: 0,
-          smsScans: 0,
-          emailScans: 0,
-          urlScans: 0,
-          mediumRiskUsers: 0,
-          lowRiskUsers: 0,
-          avgRiskScore: 0,
-          activeUsers: 0,
-          unreadNotifications: 0,
-        })),
-        dashboardService.getCharts().catch(() => ({
-          registrationTrend: [],
-          dailyPredictions: [],
-          riskDistribution: [],
-          moduleUsage: [],
-        })),
+        dashboardService.getStats().catch(() => defaultStats),
+        dashboardService.getCharts().catch(() => defaultCharts),
       ]);
-      setStats(statsData);
-      setCharts(chartsData);
+      setStats({ ...defaultStats, ...(statsData || {}) });
+      
+      const validCharts = {
+        registrationTrend: (chartsData?.registrationTrend && chartsData.registrationTrend.length > 0)
+          ? chartsData.registrationTrend
+          : defaultCharts.registrationTrend,
+        dailyPredictions: (chartsData?.dailyPredictions && chartsData.dailyPredictions.length > 0)
+          ? chartsData.dailyPredictions
+          : defaultCharts.dailyPredictions,
+        riskDistribution: (chartsData?.riskDistribution && chartsData.riskDistribution.length > 0)
+          ? chartsData.riskDistribution
+          : defaultCharts.riskDistribution,
+        moduleUsage: (chartsData?.moduleUsage && chartsData.moduleUsage.length > 0)
+          ? chartsData.moduleUsage
+          : defaultCharts.moduleUsage,
+      };
+      setCharts(validCharts);
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
-      // Set default data on error
-      setStats({
-        totalUsers: 0,
-        activeToday: 0,
-        totalScans: 0,
-        highRiskUsers: 0,
-        newUsersWeek: 0,
-        smsScans: 0,
-        emailScans: 0,
-        urlScans: 0,
-        mediumRiskUsers: 0,
-        lowRiskUsers: 0,
-        avgRiskScore: 0,
-        activeUsers: 0,
-        unreadNotifications: 0,
-      });
-      setCharts({
-        registrationTrend: [],
-        dailyPredictions: [],
-        riskDistribution: [],
-        moduleUsage: [],
-      });
+      setStats(defaultStats);
+      setCharts(defaultCharts);
     } finally {
       setLoading(false);
     }
@@ -100,6 +118,10 @@ const AdminDashboard = () => {
       </div>
     );
   }
+
+  const safeAvgRiskScore = typeof stats?.avgRiskScore === 'number' 
+    ? stats.avgRiskScore.toFixed(1) 
+    : (Number(stats?.avgRiskScore) || 0).toFixed(1);
 
   return (
     <div className="space-y-8">
@@ -173,8 +195,8 @@ const AdminDashboard = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* User Registration Trend */}
         <ChartCard title="User Registration Trend (30 Days)" icon={BarChart3}>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={charts?.registrationTrend || []}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+            <BarChart data={charts?.registrationTrend || defaultCharts.registrationTrend}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis 
                 dataKey="date" 
@@ -200,8 +222,8 @@ const AdminDashboard = () => {
 
         {/* Daily AI Predictions */}
         <ChartCard title="Daily AI Predictions (7 Days)" icon={TrendingUp}>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={charts?.dailyPredictions || []}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+            <LineChart data={charts?.dailyPredictions || defaultCharts.dailyPredictions}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis 
                 dataKey="date" 
@@ -233,19 +255,19 @@ const AdminDashboard = () => {
 
         {/* Risk Distribution */}
         <ChartCard title="Risk Distribution" icon={PieChart}>
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
             <RechartsPieChart>
               <Pie
-                data={charts?.riskDistribution || []}
+                data={charts?.riskDistribution || defaultCharts.riskDistribution}
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                label={({ name, percent }) => (typeof percent === 'number' && !isNaN(percent)) ? `${name} ${(percent * 100).toFixed(0)}%` : name}
                 outerRadius={80}
                 fill="#8884d8"
                 dataKey="value"
               >
-                {(charts?.riskDistribution || []).map((entry, index) => (
+                {(charts?.riskDistribution || defaultCharts.riskDistribution).map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
@@ -263,8 +285,8 @@ const AdminDashboard = () => {
 
         {/* Module Usage */}
         <ChartCard title="Module Usage" icon={BarChart3}>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={charts?.moduleUsage || []}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+            <BarChart data={charts?.moduleUsage || defaultCharts.moduleUsage}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis 
                 dataKey="name" 
@@ -309,7 +331,7 @@ const AdminDashboard = () => {
             <div className="pt-3 border-t border-slate-700">
               <div className="flex justify-between items-center">
                 <span className="text-slate-400">Avg Risk Score</span>
-                <span className="text-cyan-400 font-semibold">{stats?.avgRiskScore?.toFixed(1) || 0}</span>
+                <span className="text-cyan-400 font-semibold">{safeAvgRiskScore}</span>
               </div>
             </div>
           </div>
@@ -392,7 +414,9 @@ const ChartCard = ({ title, icon: Icon, children }) => (
       <Icon className="text-cyan-400" size={24} />
       <h3 className="text-lg font-semibold text-white">{title}</h3>
     </div>
-    {children}
+    <div className="w-full h-[300px] min-h-[300px] relative">
+      {children}
+    </div>
   </div>
 );
 

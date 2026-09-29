@@ -43,6 +43,15 @@ export const adminAuthService = {
     return response.data;
   },
 
+  googleLogin: async (credential) => {
+    const response = await adminApi.post('/api/admin/google', { credential });
+    if (response.data.token) {
+      localStorage.setItem('adminToken', response.data.token);
+      localStorage.setItem('adminUser', JSON.stringify(response.data.user));
+    }
+    return response.data;
+  },
+
   logout: async () => {
     try {
       await adminApi.post('/api/admin/logout');

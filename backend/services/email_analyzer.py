@@ -1,165 +1,420 @@
-"""
-Email Analyzer Service Module for CyberSense AI
-================================================
-Provides modular architecture for Email phishing & header spoofing detection.
-Currently implements a comprehensive rule-based heuristic risk engine ("model": "heuristic")
-with a clean interface designed to plug in trained ML / Transformer models (e.g., EmailBERT / DistilBERT) seamlessly.
-"""
-
+import os
 import re
-from typing import Dict, Any, List
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
+
+# ============================================================
+# MODEL PATH
+# ============================================================
+
+BASE_DIR = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+
+MODEL_PATH = os.path.join(
+    BASE_DIR,
+    "Models - Email feature",
+    "BERT_Email_Model"
+)
+
+
+# ============================================================
+# LABEL MAPPING
+# ============================================================
+
+LABELS = {
+    0: "LEGITIMATE",
+    1: "PHISHING"
+}
+
+
+# ============================================================
+# EMAIL BERT ANALYZER
+# ============================================================
 
 class EmailAnalyzer:
-    """
-    Modular Email Phishing & Header Analyzer.
-    
-    Architecture Design:
-    - `model_type` defaults to "heuristic".
-    - When your ML/Transformer model is trained, pass `model_type="EmailBERT"`
-      or load weights via `load_ml_model()` to switch execution automatically.
-    """
-    
-    def __init__(self, model_type: str = "heuristic"):
-        self.model_type = model_type
-        self.ml_model_instance = None
 
-    def load_ml_model(self, model_path_or_name: str):
-        """
-        Plug in trained ML / Transformer model weights (e.g. EmailBERT / DistilBERT).
-        """
-        self.model_type = "EmailBERT"
+    def __init__(self):
 
-    def analyze(self, content: str) -> Dict[str, Any]:
-        """
-        Main entrypoint for Email body and raw header analysis.
-        
-        Input:
-            content (str): Email body text or full raw email headers.
-            
-        Output:
-            dict containing standard CyberSense AI response format.
-        """
-        clean_content = content.strip() if content else ""
-        
-        if not clean_content:
-            return {
-                "success": False,
-                "message": "Email content cannot be empty."
-            }
+        print("\n========================================")
+        print("       Loading Email BERT Model")
+        print("========================================")
 
-        if len(clean_content) > 10000:
-            return {
-                "success": False,
-                "message": "Email content is too long (maximum 10,000 characters allowed)."
-            }
+        self.device = torch.device("cpu")
 
-        if self.model_type == "EmailBERT" and self.ml_model_instance is not None:
-            return self._predict_emailbert(clean_content)
-        else:
-            return self._predict_heuristic(clean_content)
+        print("Model path:")
+        print(MODEL_PATH)
 
-    def _predict_heuristic(self, content: str) -> Dict[str, Any]:
-        """
-        Rule-based heuristic email phishing & spoofing engine.
-        Inspects headers, body text, link signatures, attachments,
-        urgency, and brand impersonation patterns.
-        """
-        lowered = content.lower()
-        detected_signals: List[str] = []
-        score = 5
+        if not os.path.exists(MODEL_PATH):
+            raise FileNotFoundError(
+                f"Email BERT model not found:\n{MODEL_PATH}"
+            )
 
-        # Heuristic Rule Definitions
-        rules = [
-            (
-                "Urgency & high-pressure language",
-                ["urgent", "immediately", "action required", "within 24 hours", "final notice", "account suspended", "act now", "account termination", "immediate response"],
-                20
-            ),
-            (
-                "Credential harvesting / account verification",
-                ["verify your password", "confirm your account", "update login details", "security check", "re-authenticate", "sso verification", "click here to login", "sign in to verify"],
-                25
-            ),
-            (
-                "Financial / payment / refund request",
-                ["invoice attached", "wire transfer", "payment required", "overdue invoice", "refund claim", "gift card", "crypto deposit", "bank transfer", "purchase order", "remittance"],
-                20
-            ),
-            (
-                "Suspicious links / domain indicators",
-                ["http://", "https://", "bit.ly", "tinyurl", "goo.gl", "t.co", ".xyz", ".top", ".click", ".buzz", ".site", "login-verify"],
-                20
-            ),
-            (
-                "Brand / executive impersonation cue",
-                ["security team", "it support", "help desk", "system administrator", "paypal security", "microsoft security", "google security", "bank security", "ceo", "management"],
-                15
-            ),
-            (
-                "Suspicious attachment warning",
-                [".exe", ".zip", ".iso", ".vbs", ".docm", ".xlsm", ".js", "attachment included", "download attached file", "see attached invoice"],
-                15
-            ),
-            (
-                "SPF / DKIM / DMARC authentication failure",
-                ["spf=fail", "spf=softfail", "dkim=fail", "dmarc=fail", "authentication-results: fail", "spf=neutral"],
-                30
-            ),
-            (
-                "Header mismatch / suspicious routing",
-                ["x-suspended", "received: from unknown", "return-path: <>", "reply-to:"],
-                15
-            ),
-        ]
+        # ----------------------------------------------------
+        # Load tokenizer
+        # ----------------------------------------------------
 
-        for label, keywords, weight in rules:
-            if any(kw in lowered for kw in keywords):
-                score += weight
-                detected_signals.append(label)
+        print("\nLoading tokenizer...")
 
-        # Bound risk_score between 0 and 100
-        risk_score = min(score, 100)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            MODEL_PATH,
+            local_files_only=True
+        )
 
-        # Determine prediction and risk level
-        if risk_score >= 60:
-            prediction = "phishing"
-            risk_level = "High"
-            confidence = min(82.0 + (risk_score - 60) * 0.4, 98.5)
-        elif risk_score >= 35:
-            prediction = "phishing"
-            risk_level = "Medium"
-            confidence = 74.0
-        else:
-            prediction = "legitimate"
-            risk_level = "Low"
-            confidence = min(85.0 + (35 - risk_score) * 0.4, 99.0)
+        print("Tokenizer loaded successfully.")
 
-        if detected_signals:
-            explanation = f"Detected {len(detected_signals)} suspicious email indicator(s): " + ", ".join(detected_signals) + "."
-        else:
-            explanation = "No common email phishing keywords, header spoofing cues, or suspicious link indicators were detected."
+        # ----------------------------------------------------
+        # Load trained BERT model
+        # ----------------------------------------------------
 
-        return {
-            "success": True,
-            "analysis_type": "email",
-            "prediction": prediction,
-            "risk_level": risk_level,
-            "risk_score": risk_score,
-            "confidence": round(confidence, 1),
-            "detected_signals": detected_signals,
-            "explanation": explanation,
-            "model": "heuristic",
-            "message": "Email analysis completed successfully."
+        print("\nLoading BERT model...")
+
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            MODEL_PATH,
+            local_files_only=True
+        )
+
+        self.model.to(self.device)
+        self.model.eval()
+
+        print("BERT model loaded successfully.")
+        print("Device:", self.device)
+        print("Labels:", LABELS)
+
+        print("========================================\n")
+
+
+    # ========================================================
+    # BERT PREDICTION
+    # ========================================================
+
+    def predict(self, email_text):
+
+        if not email_text:
+            raise ValueError("Email content cannot be empty.")
+
+        email_text = email_text.strip()
+
+        if not email_text:
+            raise ValueError("Email content cannot be empty.")
+
+        # ----------------------------------------------------
+        # Tokenization
+        # ----------------------------------------------------
+
+        inputs = self.tokenizer(
+            email_text,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+            max_length=128
+        )
+
+        inputs = {
+            key: value.to(self.device)
+            for key, value in inputs.items()
         }
 
-    def _predict_emailbert(self, content: str) -> Dict[str, Any]:
-        """
-        Placeholder for EmailBERT / DistilBERT transformer model prediction.
-        Ready to execute PyTorch inference when weights are loaded.
-        """
-        raise NotImplementedError("EmailBERT model weights not yet loaded. Using heuristic engine.")
+        # ----------------------------------------------------
+        # Prediction
+        # ----------------------------------------------------
+
+        with torch.no_grad():
+
+            outputs = self.model(**inputs)
+
+            probabilities = torch.softmax(
+                outputs.logits,
+                dim=1
+            )
+
+            prediction_id = torch.argmax(
+                probabilities,
+                dim=1
+            ).item()
+
+            confidence = probabilities[
+                0,
+                prediction_id
+            ].item()
+
+        prediction = LABELS.get(
+            prediction_id,
+            "UNKNOWN"
+        )
+
+        return {
+            "prediction": prediction,
+            "prediction_id": prediction_id,
+            "confidence": round(confidence * 100, 2)
+        }
 
 
-# Export default singleton instance
-email_analyzer = EmailAnalyzer(model_type="heuristic")
+    # ========================================================
+    # SECURITY SIGNAL DETECTION
+    # ========================================================
+
+    def detect_signals(self, email_text):
+
+        text = email_text.lower()
+
+        signals = []
+
+        # Urgency
+        urgency_patterns = [
+            r"\burgent\b",
+            r"\bimmediately\b",
+            r"\baction required\b",
+            r"\bact now\b",
+            r"\bwithin \d+ hours?\b",
+            r"\bexpires?\b",
+            r"\bfinal warning\b"
+        ]
+
+        if any(re.search(pattern, text) for pattern in urgency_patterns):
+            signals.append("Urgency or pressure language")
+
+        # Credential requests
+        credential_patterns = [
+            r"\bpassword\b",
+            r"\blogin\b",
+            r"\bsign in\b",
+            r"\bverify your account\b",
+            r"\bverification\b",
+            r"\bcredentials?\b",
+            r"\bsecurity code\b",
+            r"\bone[- ]time password\b",
+            r"\botp\b"
+        ]
+
+        if any(re.search(pattern, text) for pattern in credential_patterns):
+            signals.append("Credential or account verification request")
+
+        # Financial / payment requests
+        financial_patterns = [
+            r"\bpayment\b",
+            r"\brefund\b",
+            r"\binvoice\b",
+            r"\bbank\b",
+            r"\bcredit card\b",
+            r"\bdebit card\b",
+            r"\bwire transfer\b",
+            r"\btransaction\b",
+            r"\bprize\b",
+            r"\breward\b"
+        ]
+
+        if any(re.search(pattern, text) for pattern in financial_patterns):
+            signals.append("Financial or reward-related content")
+
+        # Suspicious links
+        url_pattern = r"https?://\S+|www\.\S+"
+
+        if re.search(url_pattern, text):
+            signals.append("Contains a link")
+
+        # Attachment references
+        attachment_patterns = [
+            r"\battachment\b",
+            r"\battached file\b",
+            r"\bopen the file\b",
+            r"\bdownload the file\b"
+        ]
+
+        if any(re.search(pattern, text) for pattern in attachment_patterns):
+            signals.append("Attachment or file reference")
+
+        # Impersonation
+        impersonation_patterns = [
+            r"\bdear customer\b",
+            r"\bdear user\b",
+            r"\bsupport team\b",
+            r"\baccount team\b",
+            r"\bsecurity team\b",
+            r"\badmin\b",
+            r"\badministrator\b"
+        ]
+
+        if any(re.search(pattern, text) for pattern in impersonation_patterns):
+            signals.append("Possible organization impersonation")
+
+        return signals
+
+
+    # ========================================================
+    # MAIN ANALYSIS METHOD
+    # ========================================================
+
+    def analyze(self, email_text):
+
+        if not email_text:
+            raise ValueError("Email content cannot be empty.")
+
+        email_text = email_text.strip()
+
+        if not email_text:
+            raise ValueError("Email content cannot be empty.")
+
+        # ----------------------------------------------------
+        # Run BERT
+        # ----------------------------------------------------
+
+        prediction_result = self.predict(email_text)
+
+        prediction = prediction_result["prediction"]
+        confidence = prediction_result["confidence"]
+
+        # ----------------------------------------------------
+        # Detect additional security signals
+        # ----------------------------------------------------
+
+        detected_signals = self.detect_signals(email_text)
+
+        # ----------------------------------------------------
+        # Calculate risk score
+        # ----------------------------------------------------
+        #
+        # PHISHING:
+        #     BERT confidence directly represents phishing risk.
+        #
+        # LEGITIMATE:
+        #     Risk is based on the probability that the model
+        #     assigned to phishing.
+        #
+        # ----------------------------------------------------
+
+        if prediction == "PHISHING":
+            risk_score = confidence
+            risk_level = "HIGH" if confidence >= 70 else "MEDIUM"
+
+        else:
+            risk_score = 100 - confidence
+
+            if risk_score >= 70:
+                risk_level = "HIGH"
+            elif risk_score >= 40:
+                risk_level = "MEDIUM"
+            else:
+                risk_level = "LOW"
+
+        # ----------------------------------------------------
+        # Small signal adjustment
+        # ----------------------------------------------------
+        #
+        # BERT remains the primary classifier.
+        # Security signals only provide supporting context.
+        #
+
+        if prediction == "PHISHING" and detected_signals:
+
+            risk_score = min(
+                100,
+                round(
+                    risk_score + min(5, len(detected_signals)),
+                    2
+                )
+            )
+
+        elif prediction == "LEGITIMATE" and detected_signals:
+
+            risk_score = min(
+                100,
+                round(
+                    risk_score + min(10, len(detected_signals) * 2),
+                    2
+                )
+            )
+
+        # Recalculate level after adjustment
+        if risk_score >= 70:
+            risk_level = "HIGH"
+        elif risk_score >= 40:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "LOW"
+
+        # ----------------------------------------------------
+        # Explanation
+        # ----------------------------------------------------
+
+        if prediction == "PHISHING":
+
+            explanation = (
+                "The BERT email classification model identified "
+                "this message as potentially phishing."
+            )
+
+            if detected_signals:
+                explanation += (
+                    " Supporting indicators were also detected."
+                )
+
+        else:
+
+            explanation = (
+                "The BERT email classification model identified "
+                "this message as legitimate."
+            )
+
+            if detected_signals:
+                explanation += (
+                    " However, some potentially sensitive email "
+                    "patterns were detected, so caution is advised."
+                )
+
+        # ----------------------------------------------------
+        # Personalized cyber coaching
+        # ----------------------------------------------------
+
+        if prediction == "PHISHING":
+
+            coaching = (
+                "Do not click links, open unexpected attachments, "
+                "or provide passwords, OTPs, or financial information. "
+                "Verify the sender through an independent communication "
+                "channel before taking action."
+            )
+
+        elif risk_score >= 40:
+
+            coaching = (
+                "Review the sender address and any links or attachments "
+                "carefully. Avoid sharing credentials until the message "
+                "is independently verified."
+            )
+
+        else:
+
+            coaching = (
+                "The email appears legitimate based on the current model "
+                "analysis. Continue checking the sender, links, and "
+                "attachments before taking sensitive actions."
+            )
+
+        # ----------------------------------------------------
+        # Final response
+        # ----------------------------------------------------
+
+        return {
+            "prediction": prediction,
+            "prediction_id": prediction_result["prediction_id"],
+            "confidence": confidence,
+            "risk_score": round(risk_score),
+            "risk_level": risk_level,
+            "detected_signals": detected_signals,
+            "explanation": explanation,
+            "coaching": coaching,
+            "model_name": "BERT",
+            "inputSummary": (
+                email_text[:180] +
+                ("..." if len(email_text) > 180 else "")
+            )
+        }
+
+
+# ============================================================
+# LOAD MODEL ONCE
+# ============================================================
+
+email_analyzer = EmailAnalyzer()

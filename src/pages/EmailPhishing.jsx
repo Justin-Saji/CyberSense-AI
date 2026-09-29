@@ -11,74 +11,146 @@ export const EmailPhishing = () => {
   const [inputError, setInputError] = useState('');
   const { addToast } = useToast();
 
-  const handleScan = async (e) => {
-    e.preventDefault();
-    setInputError('');
+const handleScan = async (e) => {
+  e.preventDefault();
 
-    const trimmed = emailContent.trim();
-    if (!trimmed) {
-      const err = 'Please enter email text or raw headers to analyze.';
-      setInputError(err);
-      addToast(err, 'warning', 'Empty Input');
-      return;
+  setInputError('');
+
+  const trimmed = emailContent.trim();
+
+  if (!trimmed) {
+    const err = 'Please enter email text or raw headers to analyze.';
+    setInputError(err);
+    addToast(err, 'warning', 'Empty Input');
+    return;
+  }
+
+  if (trimmed.length > 10000) {
+    const err = 'Email content is too long (maximum 10,000 characters).';
+    setInputError(err);
+    addToast(err, 'warning', 'Content Too Long');
+    return;
+  }
+
+  setScanning(true);
+  setResult(null);
+
+  try {
+    const data = await scanService.scanEmail(trimmed);
+
+    console.log('Email scan response:', data);
+
+    if (data && (data.prediction || data.result)) {
+      setResult(data);
+
+      const prediction = String(
+        data.prediction ||
+        (data.result?.threatLevel === 'HIGH'
+          ? 'PHISHING'
+          : 'LEGITIMATE')
+      ).toUpperCase();
+
+      const riskLevel = String(
+        data.risk_level ||
+        data.result?.threatLevel ||
+        'LOW'
+      ).toUpperCase();
+
+      const isPhishing = prediction === 'PHISHING';
+
+      addToast(
+        `Email Analysis Complete: ${prediction} (${riskLevel} Risk)`,
+        isPhishing ? 'danger' : 'success',
+        'Scan Complete'
+      );
+    } else {
+      const errorMsg =
+        data?.message || 'Failed to analyze email content.';
+
+      setInputError(errorMsg);
+      addToast(errorMsg, 'danger', 'Scan Failed');
+    }
+  } catch (err) {
+    console.error('Email scan error:', err);
+    console.error('Response:', err?.response);
+    console.error('Response data:', err?.response?.data);
+
+    let msg = 'Failed to analyze email content.';
+
+    if (!err.response) {
+      msg = 'Unable to connect to the email analysis server.';
+    } else if (err.response.status === 400) {
+      msg =
+        err.response.data?.message ||
+        'Invalid email input provided.';
+    } else if (err.response.status === 401) {
+      msg = 'You must log in to access this page.';
+    } else if (err.response.status === 500) {
+      msg =
+        'Server error while analyzing the email. Please try again.';
+    } else {
+      msg =
+        err.response.data?.message ||
+        msg;
     }
 
-    if (trimmed.length > 10000) {
-      const err = 'Email content is too long (maximum 10,000 characters).';
-      setInputError(err);
-      addToast(err, 'warning', 'Content Too Long');
-      return;
-    }
-
-    setScanning(true);
-    setResult(null);
-
-    try {
-      const data = await scanService.scanEmail(trimmed);
-      if (data && (data.success || data.prediction || data.result)) {
-        setResult(data);
-        const prediction = data.prediction || (data.result?.threatLevel === 'HIGH' ? 'phishing' : 'legitimate');
-        const riskLevel = data.risk_level || data.result?.threatLevel || 'Low';
-        const isPhishing = prediction === 'phishing' || riskLevel === 'HIGH' || riskLevel === 'High';
-        
-        addToast(
-          `Email Analysis Complete: ${prediction.toUpperCase()} (${riskLevel} Risk)`,
-          isPhishing ? 'danger' : 'success',
-          'Scan Complete'
-        );
-      } else {
-        const errorMsg = data?.message || 'Failed to analyze email content.';
-        setInputError(errorMsg);
-        addToast(errorMsg, 'danger', 'Scan Failed');
-      }
-    } catch (err) {
-      let msg = 'Failed to analyze email content.';
-      if (!err.response) {
-        msg = 'Backend service unavailable. Please check backend connection.';
-      } else if (err.response.status === 400) {
-        msg = err.response.data?.message || 'Invalid email input provided.';
-      } else if (err.response.status === 401) {
-        msg = 'You must log in to access this page.';
-      } else if (err.response.status === 500) {
-        msg = 'Server error analyzing email. Please try again later.';
-      } else {
-        msg = err.response.data?.message || msg;
-      }
-      setInputError(msg);
-      addToast(msg, 'danger', 'Scan Error');
-    } finally {
-      setScanning(false);
-    }
-  };
+    setInputError(msg);
+    addToast(msg, 'danger', 'Scan Error');
+  } finally {
+    setScanning(false);
+  }
+};
 
   // Helper values for rendering display cards
-  const prediction = result?.prediction || (result?.result?.threatLevel === 'HIGH' ? 'phishing' : 'legitimate');
-  const riskLevel = result?.risk_level || (result?.result?.threatLevel ? result.result.threatLevel.charAt(0).toUpperCase() + result.result.threatLevel.slice(1).toLowerCase() : 'Low');
-  const riskScore = result?.risk_score ?? result?.result?.riskScore ?? 0;
-  const confidence = result?.confidence ?? 92;
-  const detectedSignals = result?.detected_signals || result?.result?.detected_signals || result?.result?.factors?.map(f => f.label) || [];
-  const explanation = result?.explanation || result?.result?.explanation || '';
-  const modelEngine = result?.model || 'heuristic';
+  const prediction = String(
+  result?.prediction ||
+  (result?.result?.threatLevel === 'HIGH' ? 'PHISHING' : 'LEGITIMATE')
+).toUpperCase();
+
+const riskLevel = String(
+  result?.risk_level ||
+  result?.result?.threatLevel ||
+  'LOW'
+).toUpperCase();
+
+const riskScore = Number(
+  result?.risk_score ??
+  result?.result?.riskScore ??
+  0
+);
+
+const confidence = Number(
+  result?.confidence ??
+  0
+);
+
+const detectedSignals = Array.isArray(result?.detected_signals)
+  ? result.detected_signals
+  : Array.isArray(result?.result?.detected_signals)
+    ? result.result.detected_signals
+    : [];
+
+const explanation = String(
+  result?.explanation ||
+  result?.result?.explanation ||
+  ''
+);
+
+const coaching = String(
+  result?.coaching ||
+  result?.result?.coaching ||
+  ''
+);
+
+const modelEngine = String(
+  result?.model_name ||
+  result?.model ||
+  'BERT'
+);
+
+const isPhishing = prediction === 'PHISHING';
+const isHighRisk = riskLevel === 'HIGH';
+const isMediumRisk = riskLevel === 'MEDIUM';
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 py-6 px-4">
@@ -94,12 +166,17 @@ export const EmailPhishing = () => {
         <form onSubmit={handleScan} className="space-y-4">
           <div>
             <div className="flex justify-between items-center mb-2">
-              <label className="block text-xs font-semibold text-slate-300">Email Text or Header Content</label>
+              <label htmlFor="email-content" className="block text-xs font-semibold text-slate-300">
+                  Email Text or Header Content
+              </label>
+
               <span className="text-[11px] text-slate-500 font-mono">
                 {emailContent.length}/10000 characters
               </span>
             </div>
             <textarea
+              id="email-content"
+              name="emailContent"
               rows={6}
               value={emailContent}
               onChange={(e) => {
@@ -132,7 +209,7 @@ export const EmailPhishing = () => {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className={`p-6 rounded-xl border ${
-              prediction === 'phishing' || riskLevel === 'High' || riskLevel === 'HIGH'
+              isPhishing || isHighRisk
                 ? 'bg-rose-500/10 border-rose-500/30 text-rose-200'
                 : riskLevel === 'Medium' || riskLevel === 'MEDIUM'
                 ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
@@ -142,14 +219,14 @@ export const EmailPhishing = () => {
             {/* Verdict Header & Badges */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
               <div className="flex items-center space-x-2.5">
-                {prediction === 'phishing' || riskLevel === 'High' || riskLevel === 'HIGH' || riskLevel === 'Medium' ? (
+                {isPhishing || isHighRisk || isMediumRisk ? (
                   <AlertTriangle className="w-6 h-6 text-rose-400 shrink-0" />
                 ) : (
                   <ShieldCheck className="w-6 h-6 text-emerald-400 shrink-0" />
                 )}
                 <div>
                   <h3 className="font-bold text-sm tracking-wide text-white uppercase">
-                    Prediction: {prediction === 'phishing' ? 'PHISHING DETECTED' : 'LEGITIMATE EMAIL'}
+                    Prediction: {isPhishing ? 'PHISHING DETECTED' : 'LEGITIMATE EMAIL'}
                   </h3>
                   <p className="text-[11px] text-slate-400">
                     Risk Level: <span className="font-semibold text-slate-200">{riskLevel} Risk</span>
@@ -196,6 +273,16 @@ export const EmailPhishing = () => {
                 </div>
               </div>
             )}
+            {coaching && (
+  <div className="space-y-1 pt-2">
+    <p className="text-xs font-semibold text-slate-300">
+      Cybersecurity Coaching:
+    </p>
+    <p className="text-xs text-slate-300 leading-relaxed">
+      {coaching}
+    </p>
+  </div>
+)}
           </motion.div>
         )}
       </div>

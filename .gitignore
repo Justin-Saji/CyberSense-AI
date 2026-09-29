@@ -42,3 +42,48 @@ geo_tagged_pic.jpeg
 
 # Office temporary/lock files
 ~$*
+
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# ML model files
+*.keras
+*.h5
+*.pt
+*.pth
+*.safetensors
+*.bin
+
+# Datasets
+*.csv
+*.xlsx
+*.xls
+
+# Large generated files
+trained_models/
+checkpoints/
+
+# Uploads
+uploads/
+
+# Playwright generated reports
+playwright-report/
+test-results/
+
+# Python serialized/model preprocessing files
+*.pkl
+
+# Temporary files
+*.tmp
+*.temp
+
+# Python cache anywhere
+**/__pycache__/
+
+# Local datasets
+**/*.csv
+**/*.xlsx
+**/*.xls

@@ -14,6 +14,7 @@ const RiskManagement = () => {
   const [levelFilter, setLevelFilter] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [counts, setCounts] = useState({ high: 0, medium: 0, low: 0 });
 
   useEffect(() => {
     loadRiskUsers();
@@ -28,8 +29,18 @@ const RiskManagement = () => {
         level: levelFilter,
       };
       const data = await riskService.getRiskUsers(params);
-      setUsers(data.users);
-      setTotalPages(data.pages);
+      setUsers(data.users || []);
+      setTotalPages(data.pages || 1);
+      if (data.counts) {
+        setCounts(data.counts);
+      } else {
+        const uList = data.users || [];
+        setCounts({
+          high: uList.filter(u => u.riskScore >= 70).length,
+          medium: uList.filter(u => u.riskScore >= 40 && u.riskScore < 70).length,
+          low: uList.filter(u => u.riskScore < 40).length,
+        });
+      }
     } catch (error) {
       console.error('Failed to load risk users:', error);
     } finally {
@@ -138,7 +149,7 @@ const RiskManagement = () => {
                     <td className="px-6 py-4">{getSecurityLevelBadge(user.securityLevel)}</td>
                     <td className="px-6 py-4 text-sm text-slate-400">{user.passwordStrength || 'Unknown'}</td>
                     <td className="px-6 py-4 text-sm text-slate-400">
-                      {new Date(user.created_at).toLocaleDateString()}
+                      {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
                     </td>
                   </tr>
                 ))
@@ -181,7 +192,7 @@ const RiskManagement = () => {
             <h3 className="text-lg font-semibold text-red-400">High Risk Users</h3>
           </div>
           <p className="text-3xl font-bold text-white">
-            {users.filter(u => u.riskScore >= 70).length}
+            {counts.high}
           </p>
         </div>
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-6">
@@ -190,7 +201,7 @@ const RiskManagement = () => {
             <h3 className="text-lg font-semibold text-amber-400">Medium Risk Users</h3>
           </div>
           <p className="text-3xl font-bold text-white">
-            {users.filter(u => u.riskScore >= 40 && u.riskScore < 70).length}
+            {counts.medium}
           </p>
         </div>
         <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-6">
@@ -199,7 +210,7 @@ const RiskManagement = () => {
             <h3 className="text-lg font-semibold text-emerald-400">Low Risk Users</h3>
           </div>
           <p className="text-3xl font-bold text-white">
-            {users.filter(u => u.riskScore < 40).length}
+            {counts.low}
           </p>
         </div>
       </div>

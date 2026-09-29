@@ -136,7 +136,7 @@ const SecurityLogs = () => {
                     <td className="px-6 py-4 text-sm text-white">{log.message}</td>
                     <td className="px-6 py-4 text-sm text-slate-400 max-w-xs truncate">{log.details || '-'}</td>
                     <td className="px-6 py-4 text-sm text-slate-400">
-                      {new Date(log.created_at).toLocaleString()}
+                      {(log.createdAt || log.created_at) ? new Date(log.createdAt || log.created_at).toLocaleString() : 'N/A'}
                     </td>
                   </tr>
                 ))
