@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Shield, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { adminAuthService } from '../../services/adminService';
+import { authService } from '../../services/authService';
 import GoogleSignInButton from '../../components/GoogleSignInButton';
 
 const AdminLogin = () => {
@@ -19,12 +20,34 @@ const AdminLogin = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState('');
+  const [forgotError, setForgotError] = useState('');
+
   const handleChange = (e) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
     });
     setError('');
+  };
+
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    setForgotError('');
+    setForgotMessage('');
+    setForgotLoading(true);
+
+    try {
+      const response = await authService.forgotPassword(forgotEmail);
+      setForgotMessage(response?.message || 'If an account exists with this email, password reset instructions have been sent.');
+    } catch (err) {
+      setForgotError(err.response?.data?.message || 'Failed to send reset email. Please try again.');
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -159,12 +182,18 @@ const AdminLogin = () => {
                 />
                 <span className="text-sm text-slate-300">Remember me</span>
               </label>
-              <a
-                href="/forgot-password"
-                className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotEmail(formData.email);
+                  setForgotMessage('');
+                  setForgotError('');
+                  setShowForgotModal(true);
+                }}
+                className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors focus:outline-none"
               >
                 Forgot password?
-              </a>
+              </button>
             </div>
 
             {/* Submit button */}
@@ -205,6 +234,68 @@ const AdminLogin = () => {
           </a>
         </div>
       </div>
+
+      {/* Forgot Password Modal */}
+      {showForgotModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
+            <h2 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
+              <Shield className="text-cyan-400" size={24} />
+              Reset Admin Password
+            </h2>
+            <p className="text-slate-400 text-sm mb-6">
+              Enter your registered admin email address and we will send you password reset instructions.
+            </p>
+
+            {forgotMessage && (
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-sm">
+                {forgotMessage}
+              </div>
+            )}
+
+            {forgotError && (
+              <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+                {forgotError}
+              </div>
+            )}
+
+            <form onSubmit={handleForgotSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Admin Email Address</label>
+                <input
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="admin@cybersense.ai"
+                  required
+                  className="w-full px-4 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowForgotModal(false)}
+                  className="flex-1 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  className="flex-1 px-4 py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {forgotLoading ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    'Send Reset Link'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

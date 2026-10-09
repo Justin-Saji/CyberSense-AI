@@ -477,16 +477,21 @@ class Feedback(db.Model):
     created_at  = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     def to_dict(self):
+        date_str = self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None
         return {
             "id": self.id,
+            "user_id": self.user_id,
             "userId": self.user_id,
             "name": self.name,
             "email": self.email,
             "subject": self.subject,
             "message": self.message,
+            "is_read": self.is_read,
             "isRead": self.is_read,
+            "is_archived": self.is_archived,
             "isArchived": self.is_archived,
-            "createdAt": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
+            "created_at": date_str,
+            "createdAt": date_str,
         }
 
 
@@ -980,16 +985,6 @@ def auto_seed_and_sync_db():
         users = User.query.all()
         for u in users:
             ensure_user_records(u)
-
-        # 5. Seed Feedback if empty
-        if Feedback.query.count() == 0 and users:
-            sample_fb = [
-                Feedback(user_id=users[0].id, name=users[0].name, email=users[0].email, subject="Great Phishing Detector", message="The SMS phishing scanner identified a suspicious link accurately. Keep up the good work!", is_read=True),
-                Feedback(user_id=users[0].id, name=users[0].name, email=users[0].email, subject="Feature Request: Dark Mode Toggle", message="Would love an option to customize dashboard accent colors.", is_read=False)
-            ]
-            for fb in sample_fb:
-                db.session.add(fb)
-            db.session.commit()
 
     except Exception as e:
         db.session.rollback()
@@ -2195,6 +2190,47 @@ def get_audit_logs(user):
 
 # ─── Feedback Management ──────────────────────────────────────────────────────
 
+@app.route("/api/feedback", methods=["POST"])
+def submit_public_feedback():
+    data = request.get_json() or {}
+    subject = (data.get("subject") or "").strip()
+    message = (data.get("message") or "").strip()
+    name = (data.get("name") or "").strip()
+    email = (data.get("email") or "").strip()
+
+    if not subject or not message:
+        return jsonify({"message": "Subject and message are required."}), 400
+
+    user_id = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        try:
+            payload = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+            user_id = payload.get("user_id")
+            if not email and user_id:
+                u = db.session.get(User, user_id)
+                if u:
+                    email = u.email
+                    name = u.name
+        except Exception:
+            pass
+
+    fb = Feedback(
+        user_id=user_id,
+        name=name or "Anonymous User",
+        email=email or "user@cybersense.ai",
+        subject=subject,
+        message=message,
+        is_read=False,
+        is_archived=False
+    )
+    db.session.add(fb)
+    db.session.commit()
+
+    return jsonify({"message": "Thank you for your feedback! Our team has received your submission.", "feedback": fb.to_dict()}), 201
+
+
 @app.route("/api/admin/feedback", methods=["GET"])
 @admin_required
 def get_feedback(user):
@@ -2978,6 +3014,11 @@ def analyze_email():
     return jsonify(analysis), 200
 
 
+# ============================================================
+# URL THREAT ANALYSIS
+# Dataset-trained RF_Reg_08 model
+# ============================================================
+
 @app.route("/api/analyze/url", methods=["POST"])
 @app.route("/api/scan/url", methods=["POST"])
 def analyze_url():
@@ -2986,64 +3027,352 @@ def analyze_url():
         return error
 
     data = request.get_json(silent=True)
-    if data is None or not isinstance(data, dict):
-        return jsonify({"success": False, "message": "Invalid or malformed JSON request body."}), 400
 
-    # Accept 'url', 'content', or 'link' key
-    url_text = data.get("url") or data.get("content") or data.get("link")
+    # --------------------------------------------------------
+    # Validate JSON
+    # --------------------------------------------------------
+
+    if data is None or not isinstance(data, dict):
+        return jsonify({
+            "success": False,
+            "message": "Invalid or malformed JSON request body."
+        }), 400
+
+    # --------------------------------------------------------
+    # Accept URL input
+    # --------------------------------------------------------
+
+    url_text = (
+        data.get("url")
+        or data.get("content")
+        or data.get("link")
+    )
+
     if url_text is None:
-        return jsonify({"success": False, "message": "Missing 'url' field in request body."}), 400
+        return jsonify({
+            "success": False,
+            "message": "Missing 'url' field in request body."
+        }), 400
 
     if not isinstance(url_text, str):
-        return jsonify({"success": False, "message": "URL must be a string."}), 400
+        return jsonify({
+            "success": False,
+            "message": "URL must be a string."
+        }), 400
 
     clean_url = url_text.strip()
+
     if not clean_url:
-        return jsonify({"success": False, "message": "URL cannot be empty."}), 400
+        return jsonify({
+            "success": False,
+            "message": "URL cannot be empty."
+        }), 400
 
     if len(clean_url) > 2000:
-        return jsonify({"success": False, "message": "URL is too long (maximum 2000 characters)."}), 400
+        return jsonify({
+            "success": False,
+            "message": "URL is too long (maximum 2000 characters)."
+        }), 400
 
-    analysis = url_analyzer.analyze(clean_url)
+    # ========================================================
+    # ACTUAL MACHINE LEARNING PREDICTION
+    #
+    # URL
+    #   ↓
+    # Saved TF-IDF Vectorizer
+    #   ↓
+    # RF_Reg_08
+    #   ↓
+    # Prediction + Probability
+    #
+    # NO keyword-based phishing detection here.
+    # ========================================================
 
-    # Automatically save analysis report to analysis_reports MySQL table for authenticated user
-    saved_report = save_analysis_report(user.id, "url", clean_url, analysis)
-    if saved_report:
-        analysis["report_id"] = saved_report.report_id
-
-    # Persist scan result to user history database
     try:
-        verdict = "Unsafe" if analysis.get("prediction") in ("malicious", "suspicious") else "Safe"
+        analysis = url_analyzer(clean_url)
+
+    except ValueError as e:
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 400
+
+    except RuntimeError as e:
+        app.logger.error(
+            f"URL model error: {e}"
+        )
+
+        return jsonify({
+            "success": False,
+            "message": "URL threat detection model is unavailable."
+        }), 503
+
+    except Exception as e:
+        app.logger.exception(
+            f"Unexpected URL analysis error: {e}"
+        )
+
+        return jsonify({
+            "success": False,
+            "message": "An error occurred while analyzing the URL."
+        }), 500
+
+    # ========================================================
+    # NORMALIZE MODEL RESULT
+    # ========================================================
+
+    prediction = analysis.get(
+        "prediction",
+        0
+    )
+
+    verdict = analysis.get(
+        "verdict",
+        "LEGITIMATE"
+    )
+
+    risk_score = float(
+        analysis.get(
+            "risk_score",
+            0
+        )
+    )
+
+    risk_level = analysis.get(
+        "risk_level",
+        "LOW"
+    )
+
+    confidence = float(
+        analysis.get(
+            "confidence",
+            0
+        )
+    )
+
+    phishing_probability = float(
+        analysis.get(
+            "phishing_probability",
+            0
+        )
+    )
+
+    legitimate_probability = float(
+        analysis.get(
+            "legitimate_probability",
+            0
+        )
+    )
+
+    # ========================================================
+    # APPLICATION-LEVEL VALUES
+    # ========================================================
+
+    if int(prediction) == 1:
+
+        safe_verdict = "Unsafe"
+
+        explanation = (
+            "The trained Random Forest URL threat detection "
+            "model classified this URL as phishing."
+        )
+
+        coaching = (
+            "Do not visit this URL or enter credentials "
+            "until its legitimacy has been independently verified."
+        )
+
+    else:
+
+        safe_verdict = "Safe"
+
+        explanation = (
+            "The trained Random Forest URL threat detection "
+            "model classified this URL as legitimate."
+        )
+
+        coaching = (
+            "The URL was classified as legitimate by the "
+            "trained model. Continue following safe browsing practices."
+        )
+
+    # ========================================================
+    # ADD APPLICATION RESPONSE FIELDS
+    # ========================================================
+
+    analysis["success"] = True
+
+    analysis["prediction"] = (
+        "phishing"
+        if int(prediction) == 1
+        else "legitimate"
+    )
+
+    analysis["verdict"] = verdict
+
+    analysis["risk_score"] = round(
+        risk_score,
+        2
+    )
+
+    analysis["risk_level"] = risk_level.upper()
+
+    analysis["confidence"] = round(
+        confidence,
+        2
+    )
+
+    analysis["phishing_probability"] = round(
+        phishing_probability,
+        2
+    )
+
+    analysis["legitimate_probability"] = round(
+        legitimate_probability,
+        2
+    )
+
+    analysis["model"] = "RF_Reg_08"
+
+    analysis["model_type"] = "Random Forest"
+
+    analysis["feature_extraction"] = (
+        "TF-IDF character n-grams (2,5)"
+    )
+
+    analysis["verdict_display"] = safe_verdict
+
+    analysis["explanation"] = explanation
+
+    analysis["coaching"] = coaching
+
+    # ========================================================
+    # SAVE ANALYSIS REPORT
+    # ========================================================
+
+    saved_report = save_analysis_report(
+        user.id,
+        "url",
+        clean_url,
+        analysis
+    )
+
+    if saved_report:
+
+        analysis["report_id"] = (
+            saved_report.report_id
+        )
+
+    # ========================================================
+    # SAVE SCAN RESULT
+    # ========================================================
+
+    try:
+
         scan_entry = ScanResult(
             user_id=user.id,
+
             module="url",
-            input_summary=summarize_input(clean_url),
-            risk_score=analysis.get("risk_score", 0),
-            threat_level=analysis.get("risk_level", "LOW").upper(),
-            verdict=verdict,
-            explanation=analysis.get("explanation", ""),
-            factors=[{"label": signal, "weight": 20} for signal in analysis.get("detected_signals", [])],
-            coaching="Do not visit this link or enter any credentials until you independently verify the domain." if analysis.get("risk_score", 0) >= 35 else "Domain syntax appears clean, but always ensure HTTPS and check the domain in your browser address bar."
+
+            input_summary=summarize_input(
+                clean_url
+            ),
+
+            risk_score=int(
+                round(risk_score)
+            ),
+
+            threat_level=risk_level.upper(),
+
+            verdict=safe_verdict,
+
+            explanation=explanation,
+
+            factors=[
+                {
+                    "label": (
+                        "RF_Reg_08 model prediction"
+                    ),
+                    "weight": int(
+                        round(confidence)
+                    )
+                }
+            ],
+
+            coaching=coaching
         )
-        db.session.add(scan_entry)
+
+        db.session.add(
+            scan_entry
+        )
+
         db.session.commit()
-        record_activity(user, "URL Threat Analysis", icon="Globe", color="text-cyan-400")
+
+        record_activity(
+            user,
+            "URL Threat Analysis",
+            icon="Globe",
+            color="text-cyan-400"
+        )
+
     except Exception as e:
+
         db.session.rollback()
-        app.logger.error(f"Failed to record URL scan result: {e}")
 
-    # Return standard API structure
+        app.logger.error(
+            f"Failed to record URL scan result: {e}"
+        )
+
+    # ========================================================
+    # STANDARD RESULT OBJECT FOR REACT
+    # ========================================================
+
     analysis["result"] = {
-        "riskScore": analysis.get("risk_score", 0),
-        "threatLevel": analysis.get("risk_level", "LOW").upper(),
-        "verdict": "Unsafe" if analysis.get("prediction") in ("malicious", "suspicious") else "Safe",
-        "explanation": analysis.get("explanation", ""),
-        "coaching": "Do not visit this link or enter credentials until verified." if analysis.get("risk_score", 0) >= 35 else "No major indicators found.",
-        "detected_signals": analysis.get("detected_signals", [])
+
+        "riskScore": round(
+            risk_score,
+            2
+        ),
+
+        "threatLevel": risk_level.upper(),
+
+        "verdict": safe_verdict,
+
+        "prediction": analysis["prediction"],
+
+        "confidence": round(
+            confidence,
+            2
+        ),
+
+        "phishingProbability": round(
+            phishing_probability,
+            2
+        ),
+
+        "legitimateProbability": round(
+            legitimate_probability,
+            2
+        ),
+
+        "explanation": explanation,
+
+        "coaching": coaching,
+
+        "model": "RF_Reg_08",
+
+        "modelType": "Random Forest",
+
+        "featureExtraction": (
+            "TF-IDF character n-grams (2,5)"
+        )
     }
-    return jsonify(analysis), 200
 
+    return jsonify(
+        analysis
+    ), 200
 
+    
 @app.route("/api/reports", methods=["GET"])
 def list_reports():
     user, error = get_authenticated_user()

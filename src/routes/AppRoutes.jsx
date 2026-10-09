@@ -10,6 +10,7 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 const Home = lazy(() => import('../pages/Home').then(m => ({ default: m.Home })));
 const Features = lazy(() => import('../pages/Features').then(m => ({ default: m.Features })));
 const About = lazy(() => import('../pages/About').then(m => ({ default: m.About })));
+const Terms = lazy(() => import('../pages/Terms').then(m => ({ default: m.Terms })));
 const Login = lazy(() => import('../pages/Login').then(m => ({ default: m.Login })));
 const Register = lazy(() => import('../pages/Register').then(m => ({ default: m.Register })));
 const ResetPassword = lazy(() => import('../pages/ResetPassword').then(m => ({ default: m.ResetPassword || m.default })));
@@ -50,6 +51,7 @@ export const AppRoutes = () => {
           <Route path="/" element={<Home />} />
           <Route path="/features" element={<Features />} />
           <Route path="/about" element={<About />} />
+          <Route path="/terms" element={<Terms />} />
 
           {/* Protected Pages */}
           <Route

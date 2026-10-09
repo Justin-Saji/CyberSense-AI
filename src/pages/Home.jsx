@@ -88,13 +88,7 @@ export const Home = () => {
             <p className="text-xs text-slate-400 leading-relaxed">
               Intercept and analyze suspicious text messages using NLP to prevent phishing attacks before you click.
             </p>
-            <Link
-              to="/features"
-              className="inline-flex items-center space-x-1.5 text-xs font-semibold text-cyan-400 hover:text-cyan-300 transition-colors pt-2"
-            >
-              <span>Explore Scanner</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
+
           </motion.div>
 
           {/* Card 2: Malicious URL Detection */}
@@ -113,13 +107,7 @@ export const Home = () => {
             <p className="text-xs text-slate-400 leading-relaxed">
               Scan web links instantly against global threat databases and sandbox environments for safe browsing.
             </p>
-            <Link
-              to="/features"
-              className="inline-flex items-center space-x-1.5 text-xs font-semibold text-cyan-400 hover:text-cyan-300 transition-colors pt-2"
-            >
-              <span>Explore Scanner</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
+            
           </motion.div>
 
           {/* Card 3: AI Security Insights */}
@@ -131,20 +119,11 @@ export const Home = () => {
             transition={{ duration: 0.3, delay: 0.2 }}
             className="bg-[#0f172a]/90 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-md hover:border-cyan-500/30 transition-all"
           >
-            <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
-              <Activity className="w-5 h-5" />
-            </div>
-            <h3 className="text-lg font-bold text-white">AI Security Insights</h3>
+            <div class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-message-square w-5 h-5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></div>
+            <h3 className="text-lg font-bold text-white">Email Phishing Detection</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Transparent XAI risk scoring and behavioral telemetry that explain why specific actions are flagged as threats.
+              Deep header and content inspection powered by advanced threat intelligence.
             </p>
-            <Link
-              to="/features"
-              className="inline-flex items-center space-x-1.5 text-xs font-semibold text-cyan-400 hover:text-cyan-300 transition-colors pt-2"
-            >
-              <span>Explore Insights</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
           </motion.div>
         </div>
       </section>

@@ -37,15 +37,7 @@ export const Dashboard = () => {
       icon: Globe,
       route: '/url-scanner',
       placeholder: 'Enter the URL you want to scan...',
-    },
-    {
-      id: 'reports',
-      title: 'Security Reports',
-      desc: 'Review saved cyber risk results and historical assessment reports.',
-      icon: ShieldCheck,
-      route: '/reports',
-      placeholder: 'Enter a note to search or summarize report context...',
-    },
+    }
   ];
 
   const handleRunQuickScan = (card) => {

@@ -163,16 +163,7 @@ export const Features = () => {
                   <p className="text-xs text-slate-400 mt-2 leading-relaxed">{feature.description}</p>
                 </div>
               </div>
-
-              <div className="pt-2">
-                <button
-                  onClick={() => handleOpenScanner(feature)}
-                  className="w-full py-2.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-400 hover:text-slate-950 text-cyan-400 border border-cyan-500/20 font-semibold text-xs transition-all flex items-center justify-center space-x-1.5"
-                >
-                  <span>Analyze</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
+              
             </motion.div>
           );
         })}

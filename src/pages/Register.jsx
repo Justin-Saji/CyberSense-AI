@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { isValidEmail, validateName, validatePassword } from '../utils/validators';
 import { PasswordStrengthMeter } from '../components/PasswordStrengthMeter';
+import { TermsModal } from '../components/TermsModal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ export const Register = () => {
   const { register, googleLogin } = useAuth();
   const { addToast } = useToast();
 
+  const [showTermsModal, setShowTermsModal] = useState(false);
   const [formData, setFormData] = useState({
     name:            '',
     email:           '',
@@ -342,16 +344,37 @@ export const Register = () => {
 
           {/* Accept Terms & Conditions */}
           <div className="space-y-1 pt-1 md:col-span-2">
-            <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
-              <input
-                type="checkbox"
-                name="acceptTerms"
-                checked={formData.acceptTerms}
-                onChange={handleChange}
-                className="w-4 h-4 rounded border-slate-800 bg-slate-900 text-cyan-400 focus:ring-0 cursor-pointer"
-              />
-              <span>I accept the Terms &amp; Conditions</span>
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  name="acceptTerms"
+                  checked={formData.acceptTerms}
+                  onChange={handleChange}
+                  className="w-4 h-4 rounded border-slate-800 bg-slate-900 text-cyan-400 focus:ring-0 cursor-pointer"
+                />
+                <span>
+                  I accept the{' '}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setShowTermsModal(true);
+                    }}
+                    className="text-cyan-400 font-medium underline hover:text-cyan-300 transition-colors focus:outline-none"
+                  >
+                    Terms &amp; Conditions
+                  </button>
+                </span>
+              </label>
+              <Link
+                to="/terms"
+                target="_blank"
+                className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                Read full doc ↗
+              </Link>
+            </div>
             {errors.acceptTerms && (
               <p className="text-[11px] text-rose-400">{errors.acceptTerms}</p>
             )}
@@ -378,6 +401,20 @@ export const Register = () => {
           </p>
         </div>
       </motion.div>
+
+      {/* TERMS & CONDITIONS MODAL */}
+      <TermsModal
+        isOpen={showTermsModal}
+        onClose={() => setShowTermsModal(false)}
+        onAccept={() => {
+          setFormData((prev) => ({ ...prev, acceptTerms: true }));
+          setErrors((prev) => {
+            const { acceptTerms, ...rest } = prev;
+            return rest;
+          });
+          addToast('Terms & Conditions accepted', 'success');
+        }}
+      />
     </div>
   );
 };
