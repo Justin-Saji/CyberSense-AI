@@ -3799,7 +3799,7 @@ def chat_api():
 # ─── DB Init ─────────────────────────────────────────────────────────────────
 
 with app.app_context():
-    db.create_all()
+    #db.create_all()
     auto_seed_and_sync_db()
 
 if __name__ == "__main__":
