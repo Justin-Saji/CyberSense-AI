@@ -59,17 +59,22 @@ class SMSAnalyzer:
         self.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
+        # Note: self.load_ml_model() has been removed from startup to save RAM.
 
-        self.load_ml_model()
 
     # ========================================================
     # LOAD DISTILBERT MODEL
     # ========================================================
 
     def load_ml_model(self):
+        if self.ml_model_instance is not None and self.tokenizer is not None:
+            return
+        # The model is already loaded in memory, bypass reloading it!
         """
         Load the trained DistilBERT tokenizer and model.
         """
+        if self.ml_model_instance is not None and self.tokenizer is not None:
+            return
 
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(
@@ -83,15 +88,11 @@ class SMSAnalyzer:
         print("=" * 60)
 
         # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_path
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
 
         # Load trained model
-        self.ml_model_instance = (
-            AutoModelForSequenceClassification.from_pretrained(
-                self.model_path
-            )
+        self.ml_model_instance = AutoModelForSequenceClassification.from_pretrained(
+            self.model_path
         )
 
         # Move model to CPU/GPU
@@ -101,11 +102,7 @@ class SMSAnalyzer:
         self.ml_model_instance.eval()
 
         print("DistilBERT SMS model loaded successfully.")
-
-        print(
-            f"Model labels: {self.ml_model_instance.config.id2label}"
-        )
-
+        print(f"Model labels: {self.ml_model_instance.config.id2label}")
         print("=" * 60)
 
     # ========================================================
@@ -113,6 +110,7 @@ class SMSAnalyzer:
     # ========================================================
 
     def analyze(self, text: str) -> Dict[str, Any]:
+        self.load_ml_model()
 
         clean_text = text.strip() if text else ""
 

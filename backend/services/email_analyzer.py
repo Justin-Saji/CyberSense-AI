@@ -36,47 +36,31 @@ LABELS = {
 class EmailAnalyzer:
 
     def __init__(self):
-
-        print("\n========================================")
-        print("       Loading Email BERT Model")
-        print("========================================")
-
         self.device = torch.device("cpu")
+        self.tokenizer = None
+        self.model = None
 
-        print("Model path:")
-        print(MODEL_PATH)
+    def _lazy_load(self):
+        """Loads the model dynamically only when a scan request is made."""
+        if self.model is None or self.tokenizer is None:
+            print("\n========================================")
+            print("  Lazy Loading Email BERT Model...")
+            print("========================================")
+            print(f"Model path: {MODEL_PATH}")
+            
+            # If the model path is a remote Hugging Face repo string, bypass the local folder check
+            if "/" not in MODEL_PATH and not os.path.exists(MODEL_PATH):
+                raise FileNotFoundError(f"Email BERT model path not found: {MODEL_PATH}")
 
-        if not os.path.exists(MODEL_PATH):
-            raise FileNotFoundError(
-                f"Email BERT model not found:\n{MODEL_PATH}"
-            )
+            # Load tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+            
+            # Load model
+            self.model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH)
+            self.model.to(self.device)
+            self.model.eval()
+            print("Email BERT Model loaded successfully into memory.")
 
-        # ----------------------------------------------------
-        # Load tokenizer
-        # ----------------------------------------------------
-
-        print("\nLoading tokenizer...")
-
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            MODEL_PATH,
-            local_files_only=True
-        )
-
-        print("Tokenizer loaded successfully.")
-
-        # ----------------------------------------------------
-        # Load trained BERT model
-        # ----------------------------------------------------
-
-        print("\nLoading BERT model...")
-
-        self.model = AutoModelForSequenceClassification.from_pretrained(
-            MODEL_PATH,
-            local_files_only=True
-        )
-
-        self.model.to(self.device)
-        self.model.eval()
 
         print("BERT model loaded successfully.")
         print("Device:", self.device)
@@ -90,6 +74,7 @@ class EmailAnalyzer:
     # ========================================================
 
     def predict(self, email_text):
+        self._lazy_load()
 
         if not email_text:
             raise ValueError("Email content cannot be empty.")
