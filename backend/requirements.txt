@@ -2,7 +2,7 @@
 # LIGHTWEIGHT DEPLOYMENT INDEX FOR PYTORCH
 # -------------------------------------------------------------
 --find-links https://pytorch.org
-torch==2.14.0+cpu
+torch
 
 # -------------------------------------------------------------
 # CORE BACKEND & DATABASE INDICES
@@ -60,4 +60,3 @@ certifi==2026.4.22
 charset-normalizer==3.4.7
 requests==2.34.0
 urllib3==2.7.0
-
