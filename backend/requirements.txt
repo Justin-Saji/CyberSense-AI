@@ -15,4 +15,4 @@ transformers
 torch
 scikit-learn
 joblib
-gunicorn
+gunicornreportlab
