@@ -7,3 +7,7 @@ flask-mail>=0.9.1
 google-auth>=2.28.0
 requests>=2.31.0
 flask-limiter>=3.5.0
+PyMySQL
+cryptography
+python-dotenv
+gunicorn

@@ -54,8 +54,28 @@ CORS(
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "change-me-in-production").strip()
-app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///cybersense.db")
+
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is missing. Configure it in the backend .env file."
+    )
+
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+MYSQL_SSL_CA = os.getenv("MYSQL_SSL_CA", "").strip()
+
+if MYSQL_SSL_CA:
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "connect_args": {
+            "ssl": {
+                "ca": MYSQL_SSL_CA
+            }
+        }
+    }
 
 app.config["MAIL_SERVER"] = os.getenv("MAIL_SERVER", "smtp.gmail.com")
 app.config["MAIL_PORT"] = int(os.getenv("MAIL_PORT", "587"))
