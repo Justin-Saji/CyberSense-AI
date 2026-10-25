@@ -102,21 +102,24 @@ def serve_avatar(filename):
 
 allowed_origins = [
     origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000").split(",")
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
     if origin.strip()
 ]
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
-
-@app.after_request
-def add_cors_headers(response):
-    origin = request.headers.get("Origin")
-    if origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    return response
+CORS(
+    app,
+    resources={r"/api/*": {"origins": allowed_origins}},
+    supports_credentials=True,
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+    ],
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+)
 
 # ─── Extensions ──────────────────────────────────────────────────────────────
 
@@ -2929,6 +2932,8 @@ def analyze_sms():
         return jsonify({"success": False, "message": "SMS message text is too long (maximum 2000 characters)."}), 400
 
     analysis = sms_analyzer.analyze(clean_text)
+    if not analysis.get("success"):
+        return jsonify(analysis), 400
 
     # Automatically save analysis report to analysis_reports MySQL table for authenticated user
     saved_report = save_analysis_report(user.id, "sms", clean_text, analysis)
@@ -2938,6 +2943,11 @@ def analyze_sms():
     # Persist scan result to user history database
     try:
         verdict = "Unsafe" if analysis.get("prediction") == "phishing" else "Safe"
+        coaching_text = analysis.get("coaching") or (
+            "Do not click links or share credentials until you verify the sender."
+            if analysis.get("risk_score", 0) >= 45
+            else "Sender appears clean, but continue practicing caution."
+        )
         scan_entry = ScanResult(
             user_id=user.id,
             module="sms",
@@ -2947,7 +2957,7 @@ def analyze_sms():
             verdict=verdict,
             explanation=analysis.get("explanation", ""),
             factors=[{"label": signal, "weight": 20} for signal in analysis.get("detected_signals", [])],
-            coaching="Do not click links or share credentials until you verify the sender." if analysis.get("risk_score", 0) >= 45 else "Sender appears clean, but continue practicing caution."
+            coaching=coaching_text
         )
         db.session.add(scan_entry)
         db.session.commit()
@@ -2962,8 +2972,14 @@ def analyze_sms():
         "threatLevel": analysis.get("risk_level", "LOW").upper(),
         "verdict": "Unsafe" if analysis.get("prediction") == "phishing" else "Safe",
         "explanation": analysis.get("explanation", ""),
-        "coaching": "Do not click links or share credentials until you verify the sender." if analysis.get("risk_score", 0) >= 45 else "No major indicators found.",
-        "detected_signals": analysis.get("detected_signals", [])
+        "coaching": analysis.get("coaching") or (
+            "Do not click links or share credentials until you verify the sender."
+            if analysis.get("risk_score", 0) >= 45
+            else "No major indicators found."
+        ),
+        "detected_signals": analysis.get("detected_signals", []),
+        "confidence": analysis.get("confidence", 90),
+        "threat_type": analysis.get("threat_type", "SMS Phishing")
     }
     return jsonify(analysis), 200
 

@@ -596,16 +596,23 @@ const AIModuleManagement = () => {
                   <p className="text-red-400 text-sm">{sandboxResult.message}</p>
                 ) : (
                   <div className="space-y-2 text-xs">
-                    {sandboxResult.threat_type && (
+                    {(sandboxResult.threat_type || sandboxResult.classification || (sandboxResult.prediction ? String(sandboxResult.prediction).toUpperCase() : null)) && (
                       <div className="flex items-center gap-2">
                         <span className="text-slate-400 font-medium">Verdict / Threat Class:</span>
-                        <span className="text-white font-bold">{sandboxResult.threat_type}</span>
+                        <span className="text-white font-bold">
+                          {sandboxResult.threat_type || sandboxResult.classification || String(sandboxResult.prediction).toUpperCase()}
+                        </span>
                       </div>
                     )}
-                    {sandboxResult.confidence && (
+                    {sandboxResult.confidence !== undefined && sandboxResult.confidence !== null && (
                       <div className="flex items-center gap-2">
                         <span className="text-slate-400 font-medium">Model Confidence:</span>
-                        <span className="text-cyan-400 font-bold">{(parseFloat(sandboxResult.confidence) * 100).toFixed(1)}%</span>
+                        <span className="text-cyan-400 font-bold">
+                          {(() => {
+                            const val = parseFloat(sandboxResult.confidence);
+                            return (val > 1 ? val.toFixed(1) : (val * 100).toFixed(1));
+                          })()}%
+                        </span>
                       </div>
                     )}
                     {sandboxResult.explanation && (

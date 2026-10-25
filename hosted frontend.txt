@@ -1,0 +1,1 @@
+ Vercel frontend hosted link - https://cybersense-ai.vercel.app/login
